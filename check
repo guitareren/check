@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+# check — small terminal tool for network status
+# Usage: check [--lang en|tr] wifi | cable | internet [speed] | speed
+
+# Language: --lang > CHECK_LANG > system locale (tr → Turkish, anything else → English)
+LNG=${CHECK_LANG:-${LC_ALL:-${LC_MESSAGES:-$LANG}}}
+args=()
+while (( $# )); do
+    case $1 in
+        -l|-lang|--lang)  # value must be a 2-letter code, otherwise it's the command (e.g. "--lang wifi")
+            if [[ $2 =~ ^[A-Za-z]{2}$ ]]; then LNG=$2; shift 2; else shift; fi ;;
+        -lang=*|--lang=*) LNG=${1#*=}; shift ;;
+        *)         args+=("$1"); shift ;;
+    esac
+done
+set -- "${args[@]}"
+LNG=${LNG:0:2}; LNG=${LNG,,}; [[ $LNG == tr ]] || LNG=en
+t() { if [[ $LNG == tr ]]; then printf %s "$1"; else printf %s "$2"; fi; }  # t <turkish> <english>
+
+export LC_ALL=C.UTF-8  # stable nmcli output ("yes" instead of "evet")
+B= D= R= G= Y= C= N=  # don't inherit these from the environment
+if [[ -t 1 && -z $NO_COLOR ]]; then  # no colors when piped or NO_COLOR is set
+    B=$'\e[1m'; D=$'\e[2m'; R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; N=$'\e[0m'
+fi
+
+title() { printf "\n${B}${C}━━ %s ━━${N}\n" "$1"; }
+row()   { local pad=$(( 16 - ${#1} )); (( pad < 1 )) && pad=1; printf "  ${D}%s%*s${N}%s\n" "$1" $pad "" "$2"; }
+bar() { # bar <percent>
+    local p=$1 n=$(( $1 / 5 )) col=$G
+    (( p < 60 )) && col=$Y; (( p < 35 )) && col=$R
+    printf "${col}%s${D}%s${N} %s%%" "$(printf '█%.0s' $(seq 1 $n))" "$(printf '░%.0s' $(seq 1 $((20-n))))" "$p"
+}
+grade() { # grade <value> <good> <fair>  (lower = better)
+    awk -v v="$1" -v a="$2" -v b="$3" -v g="$G" -v y="$Y" -v r="$R" -v n="$N" \
+        'BEGIN{c=(v<=a)?g:(v<=b)?y:r; printf "%s%s%s", c, v, n}'
+}
+iface_of() { nmcli -t -f DEVICE,TYPE dev | awk -F: -v t="$1" '$2==t{print $1; exit}'; }
+ipinfo() {
+    local dev=$1
+    row "$(t "Yerel IP" "Local IP")" "$(ip -4 -br addr show "$dev" | awk '{print $3}')"
+    row "Gateway"   "$(ip route show default dev "$dev" | awk '{print $3; exit}')"
+    row "DNS"       "$(nmcli -t -f IP4.DNS dev show "$dev" | cut -d: -f2 | paste -sd' ')"
+    row "MAC"       "$(cat /sys/class/net/"$dev"/address)"
+}
+
+cmd_wifi() {
+    local dev; dev=$(iface_of wifi)
+    [[ -z $dev ]] && { echo "${R}$(t "WiFi arayüzü yok" "No WiFi interface")${N}" >&2; return 1; }
+    title "WiFi — $dev"
+    local line
+    line=$(nmcli -t -e yes -f ACTIVE,SSID,BSSID,CHAN,FREQ,RATE,SIGNAL,SECURITY dev wifi list ifname "$dev" --rescan no \
+           | grep '^yes:' | sed 's/\\:/-/g')
+    if [[ -z $line ]]; then echo "  ${R}$(t "Bağlı değil" "Not connected")${N}"; return; fi
+    IFS=: read -r _ ssid bssid chan freq rate sig sec <<<"$line"
+    local mhz=${freq% *} band="2.4 GHz"; (( mhz > 4900 )) && band="5 GHz"
+    local dbm; dbm=$(awk -v d="$dev:" '$1==d{gsub(/\./,"",$4); print $4}' /proc/net/wireless)
+    row "$(t "Ağ (SSID)" "Network (SSID)")" "${B}$ssid${N}"
+    row "BSSID"     "${bssid//-/:}"
+    row "$(t "Bant" "Band")" "$band  ($(t kanal channel) $chan, $freq)"
+    row "$(t "Hız" "Rate")" "$rate"
+    row "$(t "Sinyal" "Signal")" "$(bar "$sig")"
+    [[ -n $dbm ]] && row "$(t "Seviye" "Level")" "$dbm dBm  ${D}($(t "-50 çok iyi · -67 iyi · -75 zayıf" "-50 excellent · -67 good · -75 weak"))${N}"
+    row "$(t "Güvenlik" "Security")" "$sec"
+    ipinfo "$dev"
+    title "$(t "Çevredeki ağlar (aynı kanal = parazit)" "Nearby networks (same channel = interference)")"
+    local same here own; same=$(t "← aynı kanal" "← same channel"); here=$(t "← bağlı" "← connected")
+    own=$(t "← aynı modem" "← same router")
+    nmcli -t -e yes -f BSSID,SSID,CHAN,SIGNAL dev wifi list ifname "$dev" --rescan auto | sed 's/\\:/-/g' \
+        | sort -t: -k4 -nr | head -8 \
+        | while IFS=: read -r b s c g; do
+            mark=""
+            if [[ $b == "$bssid" ]]; then mark="${G}$here${N}"
+            elif [[ ${b:0:14} == "${bssid:0:14}" ]]; then mark="${D}$own${N}"  # same router, other band/SSID
+            elif [[ $c == "$chan" ]]; then mark="${Y}$same${N}"; fi
+            printf "  %-22s ${D}%s${N} %-4s %3s%% %s\n" "$(s=${s:0:22}; printf %s "${s:-$(t "<gizli>" "<hidden>")}")" "$(t kanal ch)" "$c" "$g" "$mark"
+          done
+}
+
+cmd_cable() {
+    local dev; dev=$(iface_of ethernet)
+    [[ -z $dev ]] && { echo "${R}$(t "Ethernet arayüzü yok" "No Ethernet interface")${N}" >&2; return 1; }
+    title "$(t Kablo Cable) — $dev"
+    if [[ $(cat /sys/class/net/"$dev"/carrier 2>/dev/null) != 1 ]]; then
+        row "$(t Durum Status)" "${R}$(t "Kablo takılı değil" "Cable not plugged in")${N}"
+        row "MAC" "$(cat /sys/class/net/"$dev"/address)"; return
+    fi
+    row "$(t Durum Status)" "${G}$(t Bağlı Connected)${N}"
+    row "$(t Hız Speed)"    "$(cat /sys/class/net/"$dev"/speed) Mb/s"
+    row "Duplex" "$(cat /sys/class/net/"$dev"/duplex)"
+    ipinfo "$dev"
+}
+
+cmd_internet() {
+    title "$(t İnternet Internet)"
+    local gw; gw=$(ip route show default | awk '{print $3; exit}')
+    local trace; trace=$(curl -s -m 5 https://1.1.1.1/cdn-cgi/trace)
+    row "$(t "Dış IP" "Public IP")" "$(grep ^ip= <<<"$trace" | cut -d= -f2)"
+    row "$(t Konum Location)" "$(grep ^loc= <<<"$trace" | cut -d= -f2)  ${D}(Cloudflare $(grep ^colo= <<<"$trace" | cut -d= -f2))${N}"
+    for tg in "gw:$gw" "Cloudflare:1.1.1.1" "Google:8.8.8.8"; do
+        local name=${tg%%:*} host=${tg#*:} out
+        local label=$name; [[ $name == gw ]] && label=$(t Modem Router)
+        out=$(ping -c 10 -i 0.2 -W 1 "$host" 2>/dev/null)
+        local loss; loss=$(grep -oP '\d+(?=% packet loss)' <<<"$out")
+        IFS=/ read -r mn avg mx jit <<<"$(grep -oP '= \K[\d./]+' <<<"$out")"
+        if [[ -z $avg ]]; then row "Ping $label" "${R}$(t "yanıt yok" "no reply")${N}"; continue; fi
+        local good=5 ok=20; [[ $name != gw ]] && good=30 ok=80
+        row "Ping $label" "$(grade "$avg" $good $ok) ms  ${D}jitter${N} $(grade "$jit" 5 20) ms  ${D}$(t kayıp loss)${N} $(grade "$loss" 0 2)%"
+    done
+    local dns; dns=$(curl -s -o /dev/null -m 5 -w '%{time_namelookup}' https://example.org)
+    row "$(t "DNS çözme" "DNS lookup")" "$(grade "$(awk -v t="$dns" 'BEGIN{printf "%.0f", t*1000}')" 30 100) ms"
+    [[ $1 == speed ]] && speed
+}
+
+progress() { [[ -t 1 ]] && printf "  ${D}%s${N}\r" "$1"; }  # temporary line, terminal only
+
+speed() {
+    title "$(t "Hız testi" "Speed test") (Cloudflare)"
+    progress "$(t "İndirme ölçülüyor..." "Measuring download...")"
+    local down; down=$(for i in 1 2 3 4; do
+        curl -s -o /dev/null -m 20 -w '%{http_code} %{speed_download}\n' "https://speed.cloudflare.com/__down?bytes=25000000" &
+    done; wait)
+    row "$(t İndirme Download)" "$(mbps "$down")       "   # sum of 4 parallel connections
+    progress "$(t "Yükleme ölçülüyor..." "Measuring upload...")"
+    local up; up=$(head -c 25000000 /dev/zero | curl -s -o /dev/null -m 20 -w '%{http_code} %{speed_upload}\n' --data-binary @- https://speed.cloudflare.com/__up)
+    row "$(t Yükleme Upload)" "$(mbps "$up")       "
+}
+
+mbps() { # mbps <"http_code bytes/s" lines> → sum of successful ones, or an error
+    local res; res=$(awk '$1==200{t+=$2; ok++} $1!=200{c=$1} END{if(ok) printf "%.1f", t*8/1e6; else print "E" c}' <<<"$1")
+    case $res in
+        E429) printf "${R}%s${N}" "$(t "ölçülemedi — Cloudflare sınırı (429), birkaç dk sonra dene" "failed — Cloudflare rate limit (429), try again in a few minutes")" ;;
+        E000) printf "${R}%s${N}" "$(t "ölçülemedi — bağlantı yok" "failed — no connection")" ;;
+        E*)   printf "${R}%s${N}" "$(t "ölçülemedi — HTTP" "failed — HTTP") ${res#E}" ;;
+        *)    printf "${B}%s Mbps${N}" "$res" ;;
+    esac
+}
+
+usage_tr() {
+    cat <<EOF
+${B}${C}check${N} — ağ durumu kontrol aracı
+
+${B}KULLANIM${N}
+  check [${G}--lang en|tr${N}] ${G}<komut>${N}
+
+${B}KOMUTLAR${N}
+  ${G}wifi${N}              Bağlı olunan kablosuz ağın bilgileri:
+                    • Ağ adı (SSID) ve BSSID (modemin hangi bandı)
+                    • Bant (2.4 / 5 GHz), kanal, frekans, bağlantı hızı
+                    • Sinyal yüzdesi (renkli çubuk) ve dBm değeri
+                    • Yerel IP, gateway (modem), DNS, MAC adresi
+                    • Çevredeki ağlar; aynı kanaldakiler işaretlenir (parazit)
+
+  ${G}cable${N}, ${G}kablo${N}      Ethernet bağlantısı:
+                    • Kablo takılı mı, bağlantı hızı (Mb/s), duplex
+                    • Yerel IP, gateway, DNS, MAC
+
+  ${G}internet${N}, ${G}net${N}     İnternet bağlantı kalitesi:
+                    • Dış (public) IP ve Cloudflare sunucu konumu
+                    • Modem, Cloudflare (1.1.1.1), Google (8.8.8.8) ping'i
+                      → ortalama gecikme, jitter (dalgalanma), paket kaybı
+                    • DNS çözme süresi
+
+  ${G}speed${N}, ${G}hiz${N}        internet + hız testi (Cloudflare, ~20 sn):
+                    • İndirme (4 paralel bağlantı) ve yükleme hızı, Mbps
+
+  ${G}all${N} (veya boş)    wifi + cable + internet (hız testi hariç)
+
+  ${G}-h${N}, ${G}--help${N}        Bu yardımı gösterir
+
+${B}DİL${N}
+  Varsayılan dil sistem dilinden gelir (tr → Türkçe, diğerleri → İngilizce).
+  ${G}--lang en${N} / ${G}--lang tr${N}  bu çalıştırma için dili seçer
+  ${G}CHECK_LANG=en${N}          kalıcı seçim için ~/.bashrc veya ~/.zshrc içine export edin
+
+${B}RENKLER${N}
+  ${G}yeşil${N} iyi   ${Y}sarı${N} orta   ${R}kırmızı${N} kötü
+
+${B}YORUMLAMA${N}
+  • Modem ping'i yüksek/dalgalı  → sorun WiFi'de (sinyal, kanal, parazit)
+  • Modem iyi, dış ping kötü     → sorun internet sağlayıcısında
+  • Sinyal: -50 dBm çok iyi · -67 iyi · -75 ve altı zayıf
+  • Normalde modem ping'i <5 ms, dış ping ~50 ms civarı
+
+${B}ÖRNEKLER${N}
+  check wifi
+  check speed
+  check internet speed
+  check --lang en wifi
+EOF
+}
+
+usage_en() {
+    cat <<EOF
+${B}${C}check${N} — network status tool
+
+${B}USAGE${N}
+  check [${G}--lang en|tr${N}] ${G}<command>${N}
+
+${B}COMMANDS${N}
+  ${G}wifi${N}              Details of the connected wireless network:
+                    • Network name (SSID) and BSSID (which router band)
+                    • Band (2.4 / 5 GHz), channel, frequency, link rate
+                    • Signal percentage (colored bar) and dBm value
+                    • Local IP, gateway (router), DNS, MAC address
+                    • Nearby networks; those on your channel are marked (interference)
+
+  ${G}cable${N}, ${G}kablo${N}      Ethernet connection:
+                    • Cable plugged in or not, link speed (Mb/s), duplex
+                    • Local IP, gateway, DNS, MAC
+
+  ${G}internet${N}, ${G}net${N}     Internet connection quality:
+                    • Public IP and Cloudflare server location
+                    • Ping to router, Cloudflare (1.1.1.1), Google (8.8.8.8)
+                      → average latency, jitter, packet loss
+                    • DNS lookup time
+
+  ${G}speed${N}, ${G}hiz${N}        internet + speed test (Cloudflare, ~20 s):
+                    • Download (4 parallel connections) and upload speed, Mbps
+
+  ${G}all${N} (or empty)    wifi + cable + internet (no speed test)
+
+  ${G}-h${N}, ${G}--help${N}        Show this help
+
+${B}LANGUAGE${N}
+  The default comes from your system locale (tr → Turkish, others → English).
+  ${G}--lang en${N} / ${G}--lang tr${N}  pick the language for this run
+  ${G}CHECK_LANG=en${N}          export it in ~/.bashrc or ~/.zshrc to make it permanent
+
+${B}COLORS${N}
+  ${G}green${N} good   ${Y}yellow${N} fair   ${R}red${N} bad
+
+${B}READING THE RESULTS${N}
+  • Router ping high/unstable     → WiFi problem (signal, channel, interference)
+  • Router fine, external bad     → internet provider problem
+  • Signal: -50 dBm excellent · -67 good · -75 or below weak
+  • Typical: router ping <5 ms, external ping ~50 ms
+
+${B}EXAMPLES${N}
+  check wifi
+  check speed
+  check internet speed
+  check --lang tr wifi
+EOF
+}
+
+case "$1" in
+    -h|--help|help) usage_$LNG; exit 0 ;;
+    wifi)          cmd_wifi  || exit 1 ;;
+    cable|kablo)   cmd_cable || exit 1 ;;
+    internet|net)  cmd_internet "$2" ;;
+    speed|hiz)     cmd_internet speed ;;
+    all|"")        cmd_wifi; cmd_cable; cmd_internet ;;
+    *) { echo "${R}$(t "Bilinmeyen komut:" "Unknown command:")${N} $1"; echo "$(t "Yardım için" "For help"): check --help"
+       [[ $1 == -l* || $1 == --l* ]] && echo "$(t "Dil seçimi" "Language"): check --lang en wifi"; } >&2
+       exit 1 ;;
+esac
+echo

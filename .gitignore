@@ -1,0 +1,6 @@
+# OS & Editör Dosyaları
+.DS_Store
+*~
+*.swp
+.vscode/
+.idea/
