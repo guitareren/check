@@ -184,7 +184,9 @@ cmd_wifi() {
                 if [[ $cm == same ]]; then mark="${Y}$same${N}"
                 elif [[ $cm == adjacent ]]; then mark="${Y}$adj${N}"; fi
             fi
-            printf "  %-22s ${D}%s${N} %-4s %3s%% %s\n" "$(s=${s:0:22}; printf %s "${s:-$(t "<gizli>" "<hidden>")}")" "$(t kanal ch)" "$c" "$g" "$mark"
+            local sn; sn=${s:0:22}; sn=${sn:-$(t "<gizli>" "<hidden>")}
+            local pad=$(( 22 - ${#sn} )); (( pad < 0 )) && pad=0
+            printf "  %s%*s ${D}%s${N} %-4s %3s%% %s\n" "$sn" $pad "" "$(t kanal ch)" "$c" "$g" "$mark"
           done
 }
 
