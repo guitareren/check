@@ -321,115 +321,137 @@ sys_mem() {
     fi
 }
 
+print_gpu() { # print_gpu <label> <model> <usage_pct> <vram_pct> <vram_str> <temp>
+    local lbl=$1 model=$2 pct=$3 v_pct=$4 v_str=$5 temp=$6
+    [[ -z $model ]] && return
+    row "$lbl" "$model"
+    [[ -n $pct ]] && row "$(t "$lbl Kullanım" "$lbl Usage")" "$(bar_usage "$pct")"
+    if [[ -n $v_str ]]; then
+        if [[ -n $v_pct ]]; then
+            row "$(t "$lbl Bellek" "$lbl VRAM")" "$(bar_usage "$v_pct")  $v_str"
+        else
+            row "$(t "$lbl Bellek" "$lbl VRAM")" "$v_str"
+        fi
+    fi
+    [[ -n $temp ]] && row "$(t "$lbl Sıcaklık" "$lbl Temp")" "$(grade_temp "$temp")"
+}
+
 sys_gpu() {
-    local gpu_model="" gpu_pct="" gpu_temp="" vram_pct="" vram_str=""
+    local gpus_model=() gpus_pct=() gpus_vram_pct=() gpus_vram_str=() gpus_temp=()
 
     # 4a. NVIDIA
     if command -v nvidia-smi &>/dev/null; then
-        local nv_out
-        nv_out=$(lc nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -1)
-        if [[ -n $nv_out ]]; then
-            local vu vt
-            IFS=',' read -r gpu_model gpu_pct vu vt gpu_temp <<<"$nv_out"
-            gpu_model=$(echo "$gpu_model" | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//')
-            gpu_pct=$(echo "$gpu_pct" | tr -d '[:space:]')
+        while IFS=',' read -r name pct vu vt temp; do
+            [[ -z $name ]] && continue
+            name=$(echo "$name" | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//')
+            pct=$(echo "$pct" | tr -d '[:space:]')
             vu=$(echo "$vu" | tr -d '[:space:]')
             vt=$(echo "$vt" | tr -d '[:space:]')
-            gpu_temp=$(echo "$gpu_temp" | tr -d '[:space:]')
+            temp=$(echo "$temp" | tr -d '[:space:]')
+            local v_pct="" v_str=""
             if [[ $vt =~ ^[0-9]+$ && $vt -gt 0 && $vu =~ ^[0-9]+$ ]]; then
-                vram_pct=$(( vu * 100 / vt ))
-                vram_str=$(awk -v u="$vu" -v t="$vt" 'BEGIN{if(t>=1024) printf "%.1f / %.1f GB", u/1024, t/1024; else printf "%d / %d MB", u, t}')
+                v_pct=$(( vu * 100 / vt ))
+                v_str=$(awk -v u="$vu" -v t="$vt" 'BEGIN{if(t>=1024) printf "%.1f / %.1f GB", u/1024, t/1024; else printf "%d / %d MB", u, t}')
             fi
-        fi
+            gpus_model+=("$name")
+            gpus_pct+=("$pct")
+            gpus_vram_pct+=("$v_pct")
+            gpus_vram_str+=("$v_str")
+            gpus_temp+=("$temp")
+        done < <(lc nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null)
     fi
 
     # 4b. AMD
-    if [[ -z $gpu_model ]]; then
-        for card in /sys/class/drm/card[0-9]; do
-            [[ -d "$card/device" ]] || continue
-            local drv; drv=$(grep -s '^DRIVER=' "$card/device/uevent" 2>/dev/null | cut -d= -f2)
-            if [[ $drv == amdgpu ]]; then
-                if [[ -f "$card/device/product_name" ]]; then
-                    gpu_model=$(cat "$card/device/product_name" 2>/dev/null)
-                fi
-                if [[ -z $gpu_model ]] && command -v lspci &>/dev/null; then
-                    gpu_model=$(lc lspci 2>/dev/null | grep -iE 'vga|3d|display' | grep -i amd | head -1 | sed -e 's/.*: //' -e 's/ (rev .*)//')
-                fi
-                [[ -z $gpu_model ]] && gpu_model="AMD Radeon GPU"
-
-                if [[ -f "$card/device/gpu_busy_percent" ]]; then
-                    gpu_pct=$(cat "$card/device/gpu_busy_percent" 2>/dev/null | tr -d '[:space:]')
-                fi
-
-                if [[ -f "$card/device/mem_info_vram_used" && -f "$card/device/mem_info_vram_total" ]]; then
-                    local vu vt
-                    vu=$(cat "$card/device/mem_info_vram_used" 2>/dev/null | tr -d '[:space:]')
-                    vt=$(cat "$card/device/mem_info_vram_total" 2>/dev/null | tr -d '[:space:]')
-                    if [[ $vt =~ ^[0-9]+$ && $vt -gt 0 && $vu =~ ^[0-9]+$ ]]; then
-                        vram_pct=$(( (vu * 100) / vt ))
-                        vram_str=$(awk -v u="$vu" -v t="$vt" 'BEGIN{printf "%.1f / %.1f GB", u/1073741824, t/1073741824}')
-                    fi
-                fi
-
-                for h in "$card/device"/hwmon/hwmon* /sys/class/hwmon/hwmon*; do
-                    [[ -d "$h" ]] || continue
-                    local hname; hname=$(cat "$h/name" 2>/dev/null)
-                    if [[ $hname == amdgpu && -f "$h/temp1_input" ]]; then
-                        local raw_t; raw_t=$(cat "$h/temp1_input" 2>/dev/null)
-                        if [[ $raw_t =~ ^[0-9]+$ ]]; then
-                            gpu_temp=$(( (raw_t + 500) / 1000 ))
-                            break
-                        fi
-                    fi
-                done
-                break
+    for card in /sys/class/drm/card[0-9]; do
+        [[ -d "$card/device" ]] || continue
+        local drv; drv=$(grep -s '^DRIVER=' "$card/device/uevent" 2>/dev/null | cut -d= -f2)
+        if [[ $drv == amdgpu ]]; then
+            local gpu_model="" gpu_pct="" gpu_temp="" vram_pct="" vram_str=""
+            if [[ -f "$card/device/product_name" ]]; then
+                gpu_model=$(cat "$card/device/product_name" 2>/dev/null)
             fi
-        done
-    fi
+            if [[ -z $gpu_model ]] && command -v lspci &>/dev/null; then
+                gpu_model=$(lc lspci 2>/dev/null | grep -iE 'vga|3d|display' | grep -i amd | head -1 | sed -e 's/.*: //' -e 's/ (rev .*)//')
+            fi
+            [[ -z $gpu_model ]] && gpu_model="AMD Radeon GPU"
+
+            if [[ -f "$card/device/gpu_busy_percent" ]]; then
+                gpu_pct=$(cat "$card/device/gpu_busy_percent" 2>/dev/null | tr -d '[:space:]')
+            fi
+
+            if [[ -f "$card/device/mem_info_vram_used" && -f "$card/device/mem_info_vram_total" ]]; then
+                local vu vt
+                vu=$(cat "$card/device/mem_info_vram_used" 2>/dev/null | tr -d '[:space:]')
+                vt=$(cat "$card/device/mem_info_vram_total" 2>/dev/null | tr -d '[:space:]')
+                if [[ $vt =~ ^[0-9]+$ && $vt -gt 0 && $vu =~ ^[0-9]+$ ]]; then
+                    vram_pct=$(( (vu * 100) / vt ))
+                    vram_str=$(awk -v u="$vu" -v t="$vt" 'BEGIN{printf "%.1f / %.1f GB", u/1073741824, t/1073741824}')
+                fi
+            fi
+
+            for h in "$card/device"/hwmon/hwmon* /sys/class/hwmon/hwmon*; do
+                [[ -d "$h" ]] || continue
+                local hname; hname=$(cat "$h/name" 2>/dev/null)
+                if [[ $hname == amdgpu && -f "$h/temp1_input" ]]; then
+                    local raw_t; raw_t=$(cat "$h/temp1_input" 2>/dev/null)
+                    if [[ $raw_t =~ ^[0-9]+$ ]]; then
+                        gpu_temp=$(( (raw_t + 500) / 1000 ))
+                        break
+                    fi
+                fi
+            done
+
+            gpus_model+=("$gpu_model")
+            gpus_pct+=("$gpu_pct")
+            gpus_vram_pct+=("$vram_pct")
+            gpus_vram_str+=("$vram_str")
+            gpus_temp+=("$gpu_temp")
+        fi
+    done
 
     # 4c. Intel
-    if [[ -z $gpu_model ]]; then
-        for card in /sys/class/drm/card[0-9]; do
-            [[ -d "$card/device" ]] || continue
-            local drv; drv=$(grep -s '^DRIVER=' "$card/device/uevent" 2>/dev/null | cut -d= -f2)
-            if [[ $drv == i915 || $drv == xe ]]; then
-                if command -v lspci &>/dev/null; then
-                    gpu_model=$(lc lspci 2>/dev/null | grep -iE 'vga|3d|display' | grep -i intel | head -1 | sed -e 's/.*: //' -e 's/ (rev .*)//')
-                fi
-                [[ -z $gpu_model ]] && gpu_model="Intel Graphics"
+    for card in /sys/class/drm/card[0-9]; do
+        [[ -d "$card/device" ]] || continue
+        local drv; drv=$(grep -s '^DRIVER=' "$card/device/uevent" 2>/dev/null | cut -d= -f2)
+        if [[ $drv == i915 || $drv == xe ]]; then
+            local gpu_model="" gpu_pct="" gpu_temp="" vram_pct="" vram_str=""
+            if command -v lspci &>/dev/null; then
+                gpu_model=$(lc lspci 2>/dev/null | grep -iE 'vga|3d|display' | grep -i intel | head -1 | sed -e 's/.*: //' -e 's/ (rev .*)//')
+            fi
+            [[ -z $gpu_model ]] && gpu_model="Intel Graphics"
 
-                if [[ -f "$card/device/gpu_busy_percent" ]]; then
-                    gpu_pct=$(cat "$card/device/gpu_busy_percent" 2>/dev/null | tr -d '[:space:]')
-                fi
+            if [[ -f "$card/device/gpu_busy_percent" ]]; then
+                gpu_pct=$(cat "$card/device/gpu_busy_percent" 2>/dev/null | tr -d '[:space:]')
+            fi
 
-                for h in "$card/device"/hwmon/hwmon* /sys/class/hwmon/hwmon*; do
-                    [[ -d "$h" ]] || continue
-                    local hname; hname=$(cat "$h/name" 2>/dev/null)
-                    if [[ ( $hname == i915 || $hname == xe ) && -f "$h/temp1_input" ]]; then
-                        local raw_t; raw_t=$(cat "$h/temp1_input" 2>/dev/null)
-                        if [[ $raw_t =~ ^[0-9]+$ ]]; then
-                            gpu_temp=$(( (raw_t + 500) / 1000 ))
-                            break
-                        fi
+            for h in "$card/device"/hwmon/hwmon* /sys/class/hwmon/hwmon*; do
+                [[ -d "$h" ]] || continue
+                local hname; hname=$(cat "$h/name" 2>/dev/null)
+                if [[ ( $hname == i915 || $hname == xe ) && -f "$h/temp1_input" ]]; then
+                    local raw_t; raw_t=$(cat "$h/temp1_input" 2>/dev/null)
+                    if [[ $raw_t =~ ^[0-9]+$ ]]; then
+                        gpu_temp=$(( (raw_t + 500) / 1000 ))
+                        break
                     fi
-                done
-                break
-            fi
-        done
-    fi
+                fi
+            done
 
-    # Print GPU (silently omitted if no GPU detected)
-    if [[ -n $gpu_model ]]; then
-        row "GPU" "$gpu_model"
-        [[ -n $gpu_pct ]] && row "$(t "GPU Kullanım" "GPU Usage")" "$(bar_usage "$gpu_pct")"
-        if [[ -n $vram_str ]]; then
-            if [[ -n $vram_pct ]]; then
-                row "$(t "GPU Bellek" "GPU VRAM")" "$(bar_usage "$vram_pct")  $vram_str"
-            else
-                row "$(t "GPU Bellek" "GPU VRAM")" "$vram_str"
-            fi
+            gpus_model+=("$gpu_model")
+            gpus_pct+=("$gpu_pct")
+            gpus_vram_pct+=("$vram_pct")
+            gpus_vram_str+=("$vram_str")
+            gpus_temp+=("$gpu_temp")
         fi
-        [[ -n $gpu_temp ]] && row "$(t "GPU Sıcaklık" "GPU Temp")" "$(grade_temp "$gpu_temp")"
+    done
+
+    local count=${#gpus_model[@]}
+    if (( count == 1 )); then
+        print_gpu "GPU" "${gpus_model[0]}" "${gpus_pct[0]}" "${gpus_vram_pct[0]}" "${gpus_vram_str[0]}" "${gpus_temp[0]}"
+    elif (( count > 1 )); then
+        local i
+        for (( i=0; i<count; i++ )); do
+            print_gpu "GPU $i" "${gpus_model[i]}" "${gpus_pct[i]}" "${gpus_vram_pct[i]}" "${gpus_vram_str[i]}" "${gpus_temp[i]}"
+        done
     fi
 }
 
