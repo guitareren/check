@@ -15,6 +15,7 @@ sed                any       # 4.10     text processing
 coreutils          any       # 9.12     head, cut, paste, seq, sort, cat
 
 # Other requirements
-# - Linux kernel: reads /proc/net/wireless (dBm) and /sys/class/net/*
+# - Linux kernel: reads /proc/net/wireless (dBm), /sys/class/net/*, /proc/stat, /proc/meminfo, /sys/class/hwmon
+# - Optional GPU tools: nvidia-smi (for NVIDIA GPUs), lm_sensors (optional fallback)
 # - Terminal with UTF-8 (C.UTF-8 locale) and ANSI color support
 # - Internet access for the speed test: speed.cloudflare.com, 1.1.1.1
