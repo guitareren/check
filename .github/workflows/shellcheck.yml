@@ -15,5 +15,11 @@ jobs:
       - name: Check bash syntax
         run: bash -n check
 
+      - name: Install ShellCheck v0.10.0
+        run: |
+          curl -sSL https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz | tar -xJ -C /tmp
+          sudo mv /tmp/shellcheck-v0.10.0/shellcheck /usr/local/bin/shellcheck
+          shellcheck --version
+
       - name: Run ShellCheck
         run: shellcheck -S warning check
