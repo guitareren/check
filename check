@@ -592,10 +592,10 @@ ${B}KULLANIM${N}
 ${B}KOMUTLAR${N}
   ${G}wifi${N}              Bağlı olunan kablosuz ağın bilgileri:
                     • Ağ adı (SSID) ve BSSID (modemin hangi bandı)
-                    • Bant (2.4 / 5 GHz), kanal, frekans, bağlantı hızı
+                    • Bant (2.4 / 5 / 6 GHz), kanal, frekans, bağlantı hızı (iw)
                     • Sinyal yüzdesi (renkli çubuk) ve dBm değeri
                     • Yerel IP, gateway (modem), DNS, MAC adresi
-                    • Çevredeki ağlar; aynı kanaldakiler işaretlenir (parazit)
+                    • Çevredeki ağlar; aynı ve komşu kanaldakiler işaretlenir (parazit)
 
   ${G}cable${N}, ${G}kablo${N}      Ethernet bağlantısı:
                     • Kablo takılı mı, bağlantı hızı (Mb/s), duplex
@@ -653,10 +653,10 @@ ${B}USAGE${N}
 ${B}COMMANDS${N}
   ${G}wifi${N}              Details of the connected wireless network:
                     • Network name (SSID) and BSSID (which router band)
-                    • Band (2.4 / 5 GHz), channel, frequency, link rate
+                    • Band (2.4 / 5 / 6 GHz), channel, frequency, link rate (iw)
                     • Signal percentage (colored bar) and dBm value
                     • Local IP, gateway (router), DNS, MAC address
-                    • Nearby networks; those on your channel are marked (interference)
+                    • Nearby networks; same and adjacent channels are marked (interference)
 
   ${G}cable${N}, ${G}kablo${N}      Ethernet connection:
                     • Cable plugged in or not, link speed (Mb/s), duplex

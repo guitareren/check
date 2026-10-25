@@ -5,17 +5,18 @@
 #
 # package          required  # tested   used for
 bash               >= 5.0    # 5.3.20   script language
-NetworkManager     >= 1.20   # 1.58.1   nmcli: network, SSID, channel, signal, DNS
-iproute2           >= 5.0    # 7.2      ip: local IP, gateway
+NetworkManager     >= 1.20   # 1.58.1   nmcli: WiFi scan and configuration (required only for 'check wifi')
+iproute2           >= 5.0    # 7.2      ip: local IP, gateway, ethernet detection
 iputils            any       # 20250605 ping: latency, jitter, packet loss
 curl               >= 7.70   # 8.23.0   public IP, DNS lookup time, speed test (Cloudflare)
 gawk               any       # 5.4.1    awk: calculations, coloring
-grep               any       # 3.12     GNU grep (requires -P / PCRE support)
+grep               any       # 3.12     GNU grep
 sed                any       # 4.10     text processing
 coreutils          any       # 9.12     head, cut, paste, seq, sort, cat
+iw                 optional  # 6.17     iw: real-time rx/tx link bitrate in 'check wifi'
 
 # Other requirements
 # - Linux kernel: reads /proc/net/wireless (dBm), /sys/class/net/*, /proc/stat, /proc/meminfo, /sys/class/hwmon
 # - Optional GPU tools: nvidia-smi (for NVIDIA GPUs), lm_sensors (optional fallback)
-# - Terminal with UTF-8 (C.UTF-8 locale) and ANSI color support
+# - Terminal with UTF-8 (C.UTF-8 locale) and ANSI color support (automatically falls back to ASCII if UTF-8 is unavailable or LANG is unset)
 # - Internet access for the speed test: speed.cloudflare.com, 1.1.1.1
