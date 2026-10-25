@@ -75,6 +75,10 @@ band_of() { # band_of <MHz>
 }
 
 cmd_wifi() {
+    if ! command -v nmcli &>/dev/null; then
+        echo "${ER}$(t "Bu komut NetworkManager (nmcli) gerektirir." "This command requires NetworkManager (nmcli).")${EN}" >&2
+        return 1
+    fi
     local dev; dev=$(iface_of wifi)
     [[ -z $dev ]] && { echo "${ER}$(t "WiFi arayüzü yok" "No WiFi interface")${EN}" >&2; return 1; }
     title "WiFi — $dev"
@@ -108,6 +112,10 @@ cmd_wifi() {
 }
 
 cmd_cable() {
+    if ! command -v nmcli &>/dev/null; then
+        echo "${ER}$(t "Bu komut NetworkManager (nmcli) gerektirir." "This command requires NetworkManager (nmcli).")${EN}" >&2
+        return 1
+    fi
     local dev; dev=$(iface_of ethernet)
     [[ -z $dev ]] && { echo "${ER}$(t "Ethernet arayüzü yok" "No Ethernet interface")${EN}" >&2; return 1; }
     title "$(t Kablo Cable) — $dev"
@@ -587,7 +595,13 @@ case "$1" in
     internet|net)  cmd_internet "$2" ;;
     speed|hiz)     cmd_internet speed ;;
     sys|sistem|system) cmd_sys ;;
-    all|"")        cmd_wifi; cmd_cable; cmd_internet ;;
+    all|"")
+        if command -v nmcli &>/dev/null; then
+            cmd_wifi
+            cmd_cable
+        fi
+        cmd_internet
+        ;;
     *) { echo "${ER}$(t "Bilinmeyen komut:" "Unknown command:")${EN} $1"; echo "$(t "Yardım için" "For help"): check --help"
        [[ $1 == -l* || $1 == --l* ]] && echo "$(t "Dil seçimi" "Language"): check --lang en wifi"; } >&2
        exit 1 ;;
