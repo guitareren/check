@@ -22,6 +22,8 @@ B='' D='' R='' G='' Y='' C='' N=''  # don't inherit these from the environment
 if [[ -t 1 && -z $NO_COLOR ]]; then  # no colors when piped or NO_COLOR is set
     B=$'\e[1m'; D=$'\e[2m'; R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; N=$'\e[0m'
 fi
+ER='' EN=''
+if [[ -t 2 && -z $NO_COLOR ]]; then ER=$'\e[31m'; EN=$'\e[0m'; fi
 
 title() { printf "\n${B}${C}━━ %s ━━${N}\n" "$1"; }
 row()   { local pad=$(( 16 - ${#1} )); (( pad < 1 )) && pad=1; printf "  ${D}%s%*s${N}%s\n" "$1" $pad "" "$2"; }
@@ -74,7 +76,7 @@ band_of() { # band_of <MHz>
 
 cmd_wifi() {
     local dev; dev=$(iface_of wifi)
-    [[ -z $dev ]] && { echo "${R}$(t "WiFi arayüzü yok" "No WiFi interface")${N}" >&2; return 1; }
+    [[ -z $dev ]] && { echo "${ER}$(t "WiFi arayüzü yok" "No WiFi interface")${EN}" >&2; return 1; }
     title "WiFi — $dev"
     local line
     line=$(nmcli -t -e yes -f ACTIVE,SSID,BSSID,CHAN,FREQ,RATE,SIGNAL,SECURITY dev wifi list ifname "$dev" --rescan no \
@@ -107,7 +109,7 @@ cmd_wifi() {
 
 cmd_cable() {
     local dev; dev=$(iface_of ethernet)
-    [[ -z $dev ]] && { echo "${R}$(t "Ethernet arayüzü yok" "No Ethernet interface")${N}" >&2; return 1; }
+    [[ -z $dev ]] && { echo "${ER}$(t "Ethernet arayüzü yok" "No Ethernet interface")${EN}" >&2; return 1; }
     title "$(t Kablo Cable) — $dev"
     if [[ $(cat /sys/class/net/"$dev"/carrier 2>/dev/null) != 1 ]]; then
         row "$(t Durum Status)" "${R}$(t "Kablo takılı değil" "Cable not plugged in")${N}"
@@ -586,7 +588,7 @@ case "$1" in
     speed|hiz)     cmd_internet speed ;;
     sys|sistem|system) cmd_sys ;;
     all|"")        cmd_wifi; cmd_cable; cmd_internet ;;
-    *) { echo "${R}$(t "Bilinmeyen komut:" "Unknown command:")${N} $1"; echo "$(t "Yardım için" "For help"): check --help"
+    *) { echo "${ER}$(t "Bilinmeyen komut:" "Unknown command:")${EN} $1"; echo "$(t "Yardım için" "For help"): check --help"
        [[ $1 == -l* || $1 == --l* ]] && echo "$(t "Dil seçimi" "Language"): check --lang en wifi"; } >&2
        exit 1 ;;
 esac
