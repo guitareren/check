@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# check — small terminal tool for network status
-# Usage: check [--lang en|tr] wifi | cable | internet [speed] | speed
+# check — small terminal tool for network and system status
+# Usage: check [--lang en|tr] wifi | cable | internet [speed] | speed | sys
 
 # Language: --lang > CHECK_LANG > system locale (tr → Turkish, anything else → English)
 LNG=${CHECK_LANG:-${LC_ALL:-${LC_MESSAGES:-$LANG}}}
@@ -26,13 +26,35 @@ fi
 title() { printf "\n${B}${C}━━ %s ━━${N}\n" "$1"; }
 row()   { local pad=$(( 16 - ${#1} )); (( pad < 1 )) && pad=1; printf "  ${D}%s%*s${N}%s\n" "$1" $pad "" "$2"; }
 bar() { # bar <percent>
-    local p=$1 n=$(( $1 / 5 )) col=$G
+    local p=${1%.*}
+    (( p < 0 )) && p=0; (( p > 100 )) && p=100
+    local n=$(( p / 5 )) col=$G
     (( p < 60 )) && col=$Y; (( p < 35 )) && col=$R
-    printf "${col}%s${D}%s${N} %s%%" "$(printf '█%.0s' $(seq 1 $n))" "$(printf '░%.0s' $(seq 1 $((20-n))))" "$p"
+    local f="" e=""
+    (( n > 0 )) && f=$(printf '█%.0s' $(seq 1 $n))
+    (( 20 - n > 0 )) && e=$(printf '░%.0s' $(seq 1 $((20 - n))))
+    printf "${col}%s${D}%s${N} %s%%" "$f" "$e" "$p"
 }
 grade() { # grade <value> <good> <fair>  (lower = better)
     awk -v v="$1" -v a="$2" -v b="$3" -v g="$G" -v y="$Y" -v r="$R" -v n="$N" \
         'BEGIN{c=(v<=a)?g:(v<=b)?y:r; printf "%s%s%s", c, v, n}'
+}
+bar_usage() { # bar_usage <percent>  (higher = warning/alert)
+    local p=${1%.*}
+    (( p < 0 )) && p=0; (( p > 100 )) && p=100
+    local n=$(( p / 5 )) col=$G
+    (( p >= 70 )) && col=$Y; (( p > 85 )) && col=$R
+    local f="" e=""
+    (( n > 0 )) && f=$(printf '█%.0s' $(seq 1 $n))
+    (( 20 - n > 0 )) && e=$(printf '░%.0s' $(seq 1 $((20 - n))))
+    printf "${col}%s${D}%s${N} %s%%" "$f" "$e" "$p"
+}
+grade_temp() { # grade_temp <celsius>
+    local t=$1
+    [[ -z $t || $t == "N/A" ]] && return
+    local col=$G
+    (( t >= 60 )) && col=$Y; (( t > 80 )) && col=$R
+    printf "${col}%s°C${N}" "$t"
 }
 iface_of() { nmcli -t -f DEVICE,TYPE dev | awk -F: -v t="$1" '$2==t{print $1; exit}'; }
 ipinfo() {
@@ -135,9 +157,301 @@ mbps() { # mbps <"http_code bytes/s" lines> → sum of successful ones, or an er
     esac
 }
 
+cmd_sys() {
+    title "$(t "Sistem" "System")"
+
+    # Start CPU stat sampling as early as possible for accurate 0.2s delta
+    local u1 n1 s1 i1 w1 ir1 sr1 st1
+    local u2 n2 s2 i2 w2 ir2 sr2 st2
+    local has_stat=0
+    if [[ -f /proc/stat ]]; then
+        read -r _ u1 n1 s1 i1 w1 ir1 sr1 st1 _ < <(grep '^cpu ' /proc/stat)
+        has_stat=1
+    fi
+
+    # 1. CPU Model (Multi-tier: model name -> Hardware/Processor -> lscpu -> uname -m)
+    local cpu_model=""
+    if [[ -f /proc/cpuinfo ]]; then
+        cpu_model=$(grep -m1 '^model name' /proc/cpuinfo | cut -d: -f2- | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//')
+        if [[ -z $cpu_model ]]; then
+            cpu_model=$(grep -m1 -E '^(Hardware|Processor|cpu model)' /proc/cpuinfo | cut -d: -f2- | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//')
+        fi
+    fi
+    if [[ -z $cpu_model ]] && command -v lscpu &>/dev/null; then
+        cpu_model=$(lscpu 2>/dev/null | grep -m1 '^Model name:' | cut -d: -f2- | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//')
+    fi
+    [[ -z $cpu_model ]] && cpu_model=$(uname -m)
+    cpu_model=$(echo "$cpu_model" | tr -s ' ')
+
+    # 2. CPU Temperature (Multi-tier fallback)
+    local cpu_temp="" raw_temp=""
+    # Tier 1: Known hwmon CPU driver names
+    for h in /sys/class/hwmon/hwmon*; do
+        [[ -d "$h" ]] || continue
+        local hname; hname=$(cat "$h/name" 2>/dev/null)
+        case "$hname" in
+            k10temp|zenpower|coretemp|cpu_thermal|soc_thermal)
+                for lbl in "$h"/temp*_label; do
+                    [[ -f "$lbl" ]] || continue
+                    local lval; lval=$(cat "$lbl" 2>/dev/null)
+                    if [[ $lval =~ (Tctl|Package|Tdie|CPU) ]]; then
+                        local inp="${lbl%_label}_input"
+                        if [[ -f "$inp" ]]; then
+                            raw_temp=$(cat "$inp" 2>/dev/null)
+                            break 2
+                        fi
+                    fi
+                done
+                if [[ -z $raw_temp && -f "$h/temp1_input" ]]; then
+                    raw_temp=$(cat "$h/temp1_input" 2>/dev/null)
+                    break
+                fi
+                ;;
+        esac
+    done
+
+    # Tier 2: Generic label scan across all hwmon devices
+    if [[ -z $raw_temp ]]; then
+        for lbl in /sys/class/hwmon/hwmon*/temp*_label; do
+            [[ -f "$lbl" ]] || continue
+            local lval; lval=$(cat "$lbl" 2>/dev/null)
+            if [[ $lval =~ (Tctl|Package|Tdie|CPU) ]]; then
+                local inp="${lbl%_label}_input"
+                if [[ -f "$inp" ]]; then
+                    raw_temp=$(cat "$inp" 2>/dev/null)
+                    [[ -n $raw_temp ]] && break
+                fi
+            fi
+        done
+    fi
+
+    # Tier 3: ACPI /sys/class/thermal/thermal_zone*
+    if [[ -z $raw_temp ]]; then
+        for tz in /sys/class/thermal/thermal_zone*; do
+            [[ -d "$tz" ]] || continue
+            local type; type=$(cat "$tz/type" 2>/dev/null)
+            case "$type" in
+                x86_pkg_temp|cpu-thermal|cpu_thermal|k10temp|coretemp|acpitz)
+                    if [[ -f "$tz/temp" ]]; then
+                        raw_temp=$(cat "$tz/temp" 2>/dev/null)
+                        [[ -n $raw_temp ]] && break
+                    fi
+                    ;;
+            esac
+        done
+    fi
+
+    # Normalize raw millidegrees or degrees
+    if [[ -n $raw_temp && $raw_temp =~ ^[0-9]+$ ]]; then
+        if (( raw_temp > 1000 )); then
+            cpu_temp=$(( (raw_temp + 500) / 1000 ))
+        else
+            cpu_temp=$raw_temp
+        fi
+    fi
+
+    # Tier 4: sensors CLI fallback
+    if [[ -z $cpu_temp ]] && command -v sensors &>/dev/null; then
+        local s_line
+        s_line=$(sensors 2>/dev/null | grep -m1 -E '(Tctl|Package id|CPU Temperature|CPU):')
+        if [[ -n $s_line ]]; then
+            local s_val
+            s_val=$(grep -oP '[+-]?[0-9]+(\.[0-9]+)?(?=°?C)' <<<"$s_line" | head -1)
+            [[ -n $s_val ]] && cpu_temp=$(awk -v v="$s_val" 'BEGIN{printf "%.0f", v}')
+        fi
+    fi
+
+    # 3. RAM & Swap (Tier 1: MemAvailable, Tier 2: Free+Buffers+Cached+SReclaimable)
+    local mem_total=0 mem_free=0 mem_avail=0 buffers=0 cached=0 sreclaimable=0
+    local swap_total=0 swap_free=0
+    if [[ -f /proc/meminfo ]]; then
+        while IFS=': ' read -r key val _; do
+            case "$key" in
+                MemTotal)     mem_total=$val ;;
+                MemFree)      mem_free=$val ;;
+                MemAvailable) mem_avail=$val ;;
+                Buffers)      buffers=$val ;;
+                Cached)       cached=$val ;;
+                SReclaimable) sreclaimable=$val ;;
+                SwapTotal)    swap_total=$val ;;
+                SwapFree)     swap_free=$val ;;
+            esac
+        done < /proc/meminfo
+    fi
+
+    local mem_used=0 ram_pct=0 ram_str=""
+    if (( mem_total > 0 )); then
+        if (( mem_avail > 0 )); then
+            mem_used=$(( mem_total - mem_avail ))
+        else
+            mem_used=$(( mem_total - (mem_free + buffers + cached + sreclaimable) ))
+        fi
+        (( mem_used < 0 )) && mem_used=0
+        ram_pct=$(( mem_used * 100 / mem_total ))
+        ram_str=$(awk -v u="$mem_used" -v t="$mem_total" 'BEGIN{printf "%.1f / %.1f GB", u/1048576, t/1048576}')
+    fi
+
+    local swap_used=0 swap_pct=0 swap_str=""
+    if (( swap_total > 0 )); then
+        swap_used=$(( swap_total - swap_free ))
+        (( swap_used < 0 )) && swap_used=0
+        swap_pct=$(( swap_used * 100 / swap_total ))
+        swap_str=$(awk -v u="$swap_used" -v t="$swap_total" 'BEGIN{printf "%.1f / %.1f GB", u/1048576, t/1048576}')
+    fi
+
+    # 4. GPU Detection (NVIDIA -> AMD -> Intel)
+    local gpu_model="" gpu_pct="" gpu_temp="" vram_pct="" vram_str=""
+
+    # 4a. NVIDIA
+    if command -v nvidia-smi &>/dev/null; then
+        local nv_out
+        nv_out=$(nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -1)
+        if [[ -n $nv_out ]]; then
+            local vu vt
+            IFS=',' read -r gpu_model gpu_pct vu vt gpu_temp <<<"$nv_out"
+            gpu_model=$(echo "$gpu_model" | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//')
+            gpu_pct=$(echo "$gpu_pct" | tr -d '[:space:]')
+            vu=$(echo "$vu" | tr -d '[:space:]')
+            vt=$(echo "$vt" | tr -d '[:space:]')
+            gpu_temp=$(echo "$gpu_temp" | tr -d '[:space:]')
+            if [[ $vt =~ ^[0-9]+$ && $vt -gt 0 && $vu =~ ^[0-9]+$ ]]; then
+                vram_pct=$(( vu * 100 / vt ))
+                vram_str=$(awk -v u="$vu" -v t="$vt" 'BEGIN{if(t>=1024) printf "%.1f / %.1f GB", u/1024, t/1024; else printf "%d / %d MB", u, t}')
+            fi
+        fi
+    fi
+
+    # 4b. AMD
+    if [[ -z $gpu_model ]]; then
+        for card in /sys/class/drm/card[0-9]; do
+            [[ -d "$card/device" ]] || continue
+            local drv; drv=$(grep -s '^DRIVER=' "$card/device/uevent" 2>/dev/null | cut -d= -f2)
+            if [[ $drv == amdgpu ]]; then
+                if [[ -f "$card/device/product_name" ]]; then
+                    gpu_model=$(cat "$card/device/product_name" 2>/dev/null)
+                fi
+                if [[ -z $gpu_model ]] && command -v lspci &>/dev/null; then
+                    gpu_model=$(lspci 2>/dev/null | grep -iE 'vga|3d|display' | grep -i amd | head -1 | sed -e 's/.*: //' -e 's/ (rev .*)//')
+                fi
+                [[ -z $gpu_model ]] && gpu_model="AMD Radeon GPU"
+
+                if [[ -f "$card/device/gpu_busy_percent" ]]; then
+                    gpu_pct=$(cat "$card/device/gpu_busy_percent" 2>/dev/null | tr -d '[:space:]')
+                fi
+
+                if [[ -f "$card/device/mem_info_vram_used" && -f "$card/device/mem_info_vram_total" ]]; then
+                    local vu vt
+                    vu=$(cat "$card/device/mem_info_vram_used" 2>/dev/null | tr -d '[:space:]')
+                    vt=$(cat "$card/device/mem_info_vram_total" 2>/dev/null | tr -d '[:space:]')
+                    if [[ $vt =~ ^[0-9]+$ && $vt -gt 0 && $vu =~ ^[0-9]+$ ]]; then
+                        vram_pct=$(( (vu * 100) / vt ))
+                        vram_str=$(awk -v u="$vu" -v t="$vt" 'BEGIN{printf "%.1f / %.1f GB", u/1073741824, t/1073741824}')
+                    fi
+                fi
+
+                for h in "$card/device"/hwmon/hwmon* /sys/class/hwmon/hwmon*; do
+                    [[ -d "$h" ]] || continue
+                    local hname; hname=$(cat "$h/name" 2>/dev/null)
+                    if [[ $hname == amdgpu && -f "$h/temp1_input" ]]; then
+                        local raw_t; raw_t=$(cat "$h/temp1_input" 2>/dev/null)
+                        if [[ $raw_t =~ ^[0-9]+$ ]]; then
+                            gpu_temp=$(( (raw_t + 500) / 1000 ))
+                            break
+                        fi
+                    fi
+                done
+                break
+            fi
+        done
+    fi
+
+    # 4c. Intel
+    if [[ -z $gpu_model ]]; then
+        for card in /sys/class/drm/card[0-9]; do
+            [[ -d "$card/device" ]] || continue
+            local drv; drv=$(grep -s '^DRIVER=' "$card/device/uevent" 2>/dev/null | cut -d= -f2)
+            if [[ $drv == i915 || $drv == xe ]]; then
+                if command -v lspci &>/dev/null; then
+                    gpu_model=$(lspci 2>/dev/null | grep -iE 'vga|3d|display' | grep -i intel | head -1 | sed -e 's/.*: //' -e 's/ (rev .*)//')
+                fi
+                [[ -z $gpu_model ]] && gpu_model="Intel Graphics"
+
+                if [[ -f "$card/device/gpu_busy_percent" ]]; then
+                    gpu_pct=$(cat "$card/device/gpu_busy_percent" 2>/dev/null | tr -d '[:space:]')
+                fi
+
+                for h in "$card/device"/hwmon/hwmon* /sys/class/hwmon/hwmon*; do
+                    [[ -d "$h" ]] || continue
+                    local hname; hname=$(cat "$h/name" 2>/dev/null)
+                    if [[ ( $hname == i915 || $hname == xe ) && -f "$h/temp1_input" ]]; then
+                        local raw_t; raw_t=$(cat "$h/temp1_input" 2>/dev/null)
+                        if [[ $raw_t =~ ^[0-9]+$ ]]; then
+                            gpu_temp=$(( (raw_t + 500) / 1000 ))
+                            break
+                        fi
+                    fi
+                done
+                break
+            fi
+        done
+    fi
+
+    # 5. Finish CPU Usage calculation (0.2s delta)
+    local cpu_pct=""
+    if (( has_stat )); then
+        sleep 0.2
+        read -r _ u2 n2 s2 i2 w2 ir2 sr2 st2 _ < <(grep '^cpu ' /proc/stat)
+        local t1=$(( u1 + n1 + s1 + i1 + w1 + ir1 + sr1 + st1 ))
+        local t2=$(( u2 + n2 + s2 + i2 + w2 + ir2 + sr2 + st2 ))
+        local id1=$(( i1 + w1 ))
+        local id2=$(( i2 + w2 ))
+        local dt=$(( t2 - t1 ))
+        local did=$(( id2 - id1 ))
+        if (( dt > 0 )); then
+            cpu_pct=$(( (dt - did) * 100 / dt ))
+            (( cpu_pct < 0 )) && cpu_pct=0
+            (( cpu_pct > 100 )) && cpu_pct=100
+        fi
+    fi
+
+    # Fallback to /proc/loadavg
+    if [[ -z $cpu_pct && -f /proc/loadavg ]]; then
+        local cores
+        cores=$(nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo 1)
+        (( cores < 1 )) && cores=1
+        local load1
+        load1=$(awk '{print $1}' /proc/loadavg 2>/dev/null)
+        if [[ -n $load1 ]]; then
+            cpu_pct=$(awk -v l="$load1" -v c="$cores" 'BEGIN{p=int((l/c)*100); if(p>100) p=100; if(p<0) p=0; print p}')
+        fi
+    fi
+
+    # Output sections
+    row "CPU" "$cpu_model"
+    [[ -n $cpu_pct ]] && row "$(t "CPU Kullanım" "CPU Usage")" "$(bar_usage "$cpu_pct")"
+    [[ -n $cpu_temp ]] && row "$(t "CPU Sıcaklık" "CPU Temp")" "$(grade_temp "$cpu_temp")"
+
+    (( mem_total > 0 )) && row "RAM" "$(bar_usage "$ram_pct")  $ram_str"
+    (( swap_total > 0 )) && row "Swap" "$(bar_usage "$swap_pct")  $swap_str"
+
+    # Print GPU (silently omitted if no GPU detected)
+    if [[ -n $gpu_model ]]; then
+        row "GPU" "$gpu_model"
+        [[ -n $gpu_pct ]] && row "$(t "GPU Kullanım" "GPU Usage")" "$(bar_usage "$gpu_pct")"
+        if [[ -n $vram_str ]]; then
+            if [[ -n $vram_pct ]]; then
+                row "$(t "GPU Bellek" "GPU VRAM")" "$(bar_usage "$vram_pct")  $vram_str"
+            else
+                row "$(t "GPU Bellek" "GPU VRAM")" "$vram_str"
+            fi
+        fi
+        [[ -n $gpu_temp ]] && row "$(t "GPU Sıcaklık" "GPU Temp")" "$(grade_temp "$gpu_temp")"
+    fi
+}
+
 usage_tr() {
     cat <<EOF
-${B}${C}check${N} — ağ durumu kontrol aracı
+${B}${C}check${N} — ağ ve sistem durumu kontrol aracı
 
 ${B}KULLANIM${N}
   check [${G}--lang en|tr${N}] ${G}<komut>${N}
@@ -163,6 +477,11 @@ ${B}KOMUTLAR${N}
   ${G}speed${N}, ${G}hiz${N}        internet + hız testi (Cloudflare, ~20 sn):
                     • İndirme (4 paralel bağlantı) ve yükleme hızı, Mbps
 
+  ${G}sys${N}, ${G}sistem${N}       Sistem kaynakları ve donanım monitörü:
+                    • CPU modeli, anlık kullanım % ve sıcaklığı
+                    • RAM ve Swap bellek kullanımı (GB ve yüzde)
+                    • GPU modeli, kullanım %, VRAM ve sıcaklık (NVIDIA/AMD/Intel)
+
   ${G}all${N} (veya boş)    wifi + cable + internet (hız testi hariç)
 
   ${G}-h${N}, ${G}--help${N}        Bu yardımı gösterir
@@ -180,18 +499,20 @@ ${B}YORUMLAMA${N}
   • Modem iyi, dış ping kötü     → sorun internet sağlayıcısında
   • Sinyal: -50 dBm çok iyi · -67 iyi · -75 ve altı zayıf
   • Normalde modem ping'i <5 ms, dış ping ~50 ms civarı
+  • Sistem kullanımı: <%70 yeşil, %70-%85 sarı, >%85 kırmızı (<60°C yeşil, 60-80°C sarı, >80°C kırmızı)
 
 ${B}ÖRNEKLER${N}
   check wifi
   check speed
   check internet speed
-  check --lang en wifi
+  check sys
+  check --lang en sys
 EOF
 }
 
 usage_en() {
     cat <<EOF
-${B}${C}check${N} — network status tool
+${B}${C}check${N} — network and system status tool
 
 ${B}USAGE${N}
   check [${G}--lang en|tr${N}] ${G}<command>${N}
@@ -217,6 +538,11 @@ ${B}COMMANDS${N}
   ${G}speed${N}, ${G}hiz${N}        internet + speed test (Cloudflare, ~20 s):
                     • Download (4 parallel connections) and upload speed, Mbps
 
+  ${G}sys${N}, ${G}sistem${N}       System resources and hardware monitor:
+                    • CPU model, real-time utilization % and temperature
+                    • RAM and Swap memory usage (GB and percentage)
+                    • GPU model, utilization %, VRAM, and temperature (NVIDIA/AMD/Intel)
+
   ${G}all${N} (or empty)    wifi + cable + internet (no speed test)
 
   ${G}-h${N}, ${G}--help${N}        Show this help
@@ -234,12 +560,14 @@ ${B}READING THE RESULTS${N}
   • Router fine, external bad     → internet provider problem
   • Signal: -50 dBm excellent · -67 good · -75 or below weak
   • Typical: router ping <5 ms, external ping ~50 ms
+  • System load: <70% green, 70%-85% yellow, >85% red (<60°C green, 60-80°C yellow, >80°C red)
 
 ${B}EXAMPLES${N}
   check wifi
   check speed
   check internet speed
-  check --lang tr wifi
+  check sys
+  check --lang tr sys
 EOF
 }
 
@@ -249,6 +577,7 @@ case "$1" in
     cable|kablo)   cmd_cable || exit 1 ;;
     internet|net)  cmd_internet "$2" ;;
     speed|hiz)     cmd_internet speed ;;
+    sys|sistem|system) cmd_sys ;;
     all|"")        cmd_wifi; cmd_cable; cmd_internet ;;
     *) { echo "${R}$(t "Bilinmeyen komut:" "Unknown command:")${N} $1"; echo "$(t "Yardım için" "For help"): check --help"
        [[ $1 == -l* || $1 == --l* ]] && echo "$(t "Dil seçimi" "Language"): check --lang en wifi"; } >&2
