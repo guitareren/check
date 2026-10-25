@@ -111,7 +111,26 @@ cmd_wifi() {
     row "$(t "Ağ (SSID)" "Network (SSID)")" "${B}$ssid${N}"
     row "BSSID"     "${bssid//-/:}"
     row "$(t "Bant" "Band")" "$band  ($(t kanal channel) $chan, $freq)"
-    row "$(t "Hız" "Rate")" "$rate"
+    local iw; iw=$(command -v iw || { [[ -x /usr/sbin/iw ]] && echo /usr/sbin/iw; })
+    local speed_str=""
+    if [[ -n $iw ]]; then
+        local link; link=$(lc "$iw" dev "$dev" link 2>/dev/null)
+        local rx; rx=$(sed -n 's/.*rx bitrate:[ \t]*\([0-9.]*\).*/\1/p' <<<"$link")
+        local tx; tx=$(sed -n 's/.*tx bitrate:[ \t]*\([0-9.]*\).*/\1/p' <<<"$link")
+        if [[ -n $rx && -n $tx ]]; then
+            speed_str="rx $rx / tx $tx Mbit/s"
+        elif [[ -n $rx ]]; then
+            speed_str="rx $rx Mbit/s"
+        elif [[ -n $tx ]]; then
+            speed_str="tx $tx Mbit/s"
+        fi
+    fi
+    if [[ -n $speed_str ]]; then
+        local ap_max=""; [[ -n $rate ]] && ap_max="  ($(t "AP maks." "AP max") $rate)"
+        row "$(t "Hız" "Rate")" "$speed_str$ap_max"
+    else
+        row "$(t "AP maks. hız" "AP max rate")" "$rate"
+    fi
     row "$(t "Sinyal" "Signal")" "$(bar "$sig")"
     [[ -n $dbm ]] && row "$(t "Seviye" "Level")" "$dbm dBm  ${D}($(t "-50 çok iyi $DOT -67 iyi $DOT -75 zayıf" "-50 excellent $DOT -67 good $DOT -75 weak"))${N}"
     row "$(t "Güvenlik" "Security")" "$sec"
