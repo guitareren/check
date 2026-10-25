@@ -17,7 +17,7 @@ set -- "${args[@]}"
 LNG=${LNG:0:2}; LNG=${LNG,,}; [[ $LNG == tr ]] || LNG=en
 t() { if [[ $LNG == tr ]]; then printf %s "$1"; else printf %s "$2"; fi; }  # t <turkish> <english>
 
-export LC_ALL=C.UTF-8  # stable nmcli output ("yes" instead of "evet")
+lc() { LC_ALL=C "$@"; }
 B='' D='' R='' G='' Y='' C='' N=''  # don't inherit these from the environment
 if [[ -t 1 && -z $NO_COLOR ]]; then  # no colors when piped or NO_COLOR is set
     B=$'\e[1m'; D=$'\e[2m'; R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; N=$'\e[0m'
@@ -58,12 +58,12 @@ grade_temp() { # grade_temp <celsius>
     (( t >= 60 )) && col=$Y; (( t > 80 )) && col=$R
     printf "${col}%s°C${N}" "$t"
 }
-iface_of() { nmcli -t -f DEVICE,TYPE dev | awk -F: -v t="$1" '$2==t{print $1; exit}'; }
+iface_of() { lc nmcli -t -f DEVICE,TYPE dev | awk -F: -v t="$1" '$2==t{print $1; exit}'; }
 ipinfo() {
     local dev=$1
     row "$(t "Yerel IP" "Local IP")" "$(ip -4 -br addr show "$dev" | awk '{print $3}')"
     row "Gateway"   "$(ip route show default dev "$dev" | awk '{print $3; exit}')"
-    row "DNS"       "$(nmcli -t -f IP4.DNS dev show "$dev" | cut -d: -f2 | paste -sd' ')"
+    row "DNS"       "$(lc nmcli -t -f IP4.DNS dev show "$dev" | cut -d: -f2 | paste -sd' ')"
     row "MAC"       "$(cat /sys/class/net/"$dev"/address)"
 }
 
@@ -83,7 +83,7 @@ cmd_wifi() {
     [[ -z $dev ]] && { echo "${ER}$(t "WiFi arayüzü yok" "No WiFi interface")${EN}" >&2; return 1; }
     title "WiFi — $dev"
     local line
-    line=$(nmcli -t -e yes -f ACTIVE,SSID,BSSID,CHAN,FREQ,RATE,SIGNAL,SECURITY dev wifi list ifname "$dev" --rescan no \
+    line=$(lc nmcli -t -e yes -f ACTIVE,SSID,BSSID,CHAN,FREQ,RATE,SIGNAL,SECURITY dev wifi list ifname "$dev" --rescan no \
            | grep '^yes:' | sed 's/\\:/-/g')
     if [[ -z $line ]]; then echo "  ${R}$(t "Bağlı değil" "Not connected")${N}"; return; fi
     IFS=: read -r _ ssid bssid chan freq rate sig sec <<<"$line"
@@ -100,7 +100,7 @@ cmd_wifi() {
     title "$(t "Çevredeki ağlar (aynı kanal = parazit)" "Nearby networks (same channel = interference)")"
     local same here own; same=$(t "← aynı kanal" "← same channel"); here=$(t "← bağlı" "← connected")
     own=$(t "← aynı modem" "← same router")
-    nmcli -t -e yes -f BSSID,SSID,CHAN,SIGNAL dev wifi list ifname "$dev" --rescan auto | sed 's/\\:/-/g' \
+    lc nmcli -t -e yes -f BSSID,SSID,CHAN,SIGNAL dev wifi list ifname "$dev" --rescan auto | sed 's/\\:/-/g' \
         | sort -t: -k4 -nr | head -8 \
         | while IFS=: read -r b s c g; do
             mark=""
@@ -138,12 +138,14 @@ cmd_internet() {
     for tg in "gw:$gw" "Cloudflare:1.1.1.1" "Google:8.8.8.8"; do
         local name=${tg%%:*} host=${tg#*:} out
         local label=$name; [[ $name == gw ]] && label=$(t Modem Router)
-        out=$(ping -c 10 -i 0.2 -W 1 "$host" 2>/dev/null)
-        local loss; loss=$(grep -oP '\d+(?=% packet loss)' <<<"$out")
-        IFS=/ read -r _ avg _ jit <<<"$(grep -oP '= \K[\d./]+' <<<"$out")"
+        out=$(lc ping -c 10 -i 0.2 -W 1 "$host" 2>/dev/null)
+        local loss; loss=$(sed -n 's/.* \([0-9.]*\)% packet loss.*/\1/p' <<<"$out")
+        IFS=/ read -r _ avg _ jit <<<"$(sed -n 's/.*= \([0-9./]*\) ms.*/\1/p' <<<"$out")"
         if [[ -z $avg ]]; then row "Ping $label" "${R}$(t "yanıt yok" "no reply")${N}"; continue; fi
         local good=5 ok=20; [[ $name != gw ]] && good=30 ok=80
-        row "Ping $label" "$(grade "$avg" $good $ok) ms  ${D}jitter${N} $(grade "$jit" 5 20) ms  ${D}$(t kayıp loss)${N} $(grade "$loss" 0 2)%"
+        local jit_str="${D}—${N}"
+        [[ -n $jit ]] && jit_str="$(grade "$jit" 5 20) ms"
+        row "Ping $label" "$(grade "$avg" $good $ok) ms  ${D}jitter${N} $jit_str  ${D}$(t kayıp loss)${N} $(grade "$loss" 0 2)%"
     done
     local dns; dns=$(curl -s -o /dev/null -m 5 -w '%{time_namelookup}' https://example.org)
     row "$(t "DNS çözme" "DNS lookup")" "$(grade "$(awk -v t="$dns" 'BEGIN{printf "%.0f", t*1000}')" 30 100) ms"
@@ -195,7 +197,7 @@ cmd_sys() {
         fi
     fi
     if [[ -z $cpu_model ]] && command -v lscpu &>/dev/null; then
-        cpu_model=$(lscpu 2>/dev/null | grep -m1 '^Model name:' | cut -d: -f2- | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//')
+        cpu_model=$(lc lscpu 2>/dev/null | grep -m1 '^Model name:' | cut -d: -f2- | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//')
     fi
     [[ -z $cpu_model ]] && cpu_model=$(uname -m)
     cpu_model=$(echo "$cpu_model" | tr -s ' ')
@@ -270,10 +272,10 @@ cmd_sys() {
     # Tier 4: sensors CLI fallback
     if [[ -z $cpu_temp ]] && command -v sensors &>/dev/null; then
         local s_line
-        s_line=$(sensors 2>/dev/null | grep -m1 -E '(Tctl|Package id|CPU Temperature|CPU):')
+        s_line=$(lc sensors 2>/dev/null | grep -m1 -E '(Tctl|Package id|CPU Temperature|CPU):')
         if [[ -n $s_line ]]; then
             local s_val
-            s_val=$(grep -oP '[+-]?[0-9]+(\.[0-9]+)?(?=°?C)' <<<"$s_line" | head -1)
+            s_val=$(awk '{for(i=1;i<=NF;i++) if($i~/°C$/){gsub(/[+°C]/,"",$i); print $i; exit}}' <<<"$s_line")
             [[ -n $s_val ]] && cpu_temp=$(awk -v v="$s_val" 'BEGIN{printf "%.0f", v}')
         fi
     fi
@@ -322,7 +324,7 @@ cmd_sys() {
     # 4a. NVIDIA
     if command -v nvidia-smi &>/dev/null; then
         local nv_out
-        nv_out=$(nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -1)
+        nv_out=$(lc nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -1)
         if [[ -n $nv_out ]]; then
             local vu vt
             IFS=',' read -r gpu_model gpu_pct vu vt gpu_temp <<<"$nv_out"
@@ -348,7 +350,7 @@ cmd_sys() {
                     gpu_model=$(cat "$card/device/product_name" 2>/dev/null)
                 fi
                 if [[ -z $gpu_model ]] && command -v lspci &>/dev/null; then
-                    gpu_model=$(lspci 2>/dev/null | grep -iE 'vga|3d|display' | grep -i amd | head -1 | sed -e 's/.*: //' -e 's/ (rev .*)//')
+                    gpu_model=$(lc lspci 2>/dev/null | grep -iE 'vga|3d|display' | grep -i amd | head -1 | sed -e 's/.*: //' -e 's/ (rev .*)//')
                 fi
                 [[ -z $gpu_model ]] && gpu_model="AMD Radeon GPU"
 
@@ -389,7 +391,7 @@ cmd_sys() {
             local drv; drv=$(grep -s '^DRIVER=' "$card/device/uevent" 2>/dev/null | cut -d= -f2)
             if [[ $drv == i915 || $drv == xe ]]; then
                 if command -v lspci &>/dev/null; then
-                    gpu_model=$(lspci 2>/dev/null | grep -iE 'vga|3d|display' | grep -i intel | head -1 | sed -e 's/.*: //' -e 's/ (rev .*)//')
+                    gpu_model=$(lc lspci 2>/dev/null | grep -iE 'vga|3d|display' | grep -i intel | head -1 | sed -e 's/.*: //' -e 's/ (rev .*)//')
                 fi
                 [[ -z $gpu_model ]] && gpu_model="Intel Graphics"
 
