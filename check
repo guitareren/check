@@ -83,6 +83,14 @@ band_of() { # band_of <MHz>
     else                       echo "2.4 GHz"; fi
 }
 
+chan_mark() { # chan_mark <own_chan> <own_mhz> <chan> <mhz>  → same | adjacent | (boş)
+    local oc=$1 om=$2 c=$3 m=$4
+    [[ $(band_of "$om") == "$(band_of "$m")" ]] || return 0
+    if (( c == oc )); then echo same
+    elif [[ $(band_of "$om") == "2.4 GHz" ]] && (( c - oc <= 4 && oc - c <= 4 )); then echo adjacent
+    fi
+}
+
 cmd_wifi() {
     if ! command -v nmcli &>/dev/null; then
         echo "${ER}$(t "Bu komut NetworkManager (nmcli) gerektirir." "This command requires NetworkManager (nmcli).")${EN}" >&2
@@ -108,16 +116,23 @@ cmd_wifi() {
     [[ -n $dbm ]] && row "$(t "Seviye" "Level")" "$dbm dBm  ${D}($(t "-50 çok iyi $DOT -67 iyi $DOT -75 zayıf" "-50 excellent $DOT -67 good $DOT -75 weak"))${N}"
     row "$(t "Güvenlik" "Security")" "$sec"
     ipinfo "$dev"
-    title "$(t "Çevredeki ağlar (aynı kanal = parazit)" "Nearby networks (same channel = interference)")"
-    local same here own; same=$(t "$ARR aynı kanal" "$ARR same channel"); here=$(t "$ARR bağlı" "$ARR connected")
+    title "$(t "Çevredeki ağlar (aynı/komşu kanal = parazit)" "Nearby networks (same/adjacent channel = interference)")"
+    local same here own adj
+    same=$(t "$ARR aynı kanal" "$ARR same channel")
+    here=$(t "$ARR bağlı" "$ARR connected")
     own=$(t "$ARR aynı modem" "$ARR same router")
+    adj=$(t "$ARR komşu kanal" "$ARR adjacent channel")
     sort -t: -k7 -nr <<<"$scan" | head -8 \
         | while IFS=: read -r _ s b c f _ g _; do
-            : "$f"
             mark=""
             if [[ $b == "$bssid" ]]; then mark="${G}$here${N}"
             elif [[ ${b:0:14} == "${bssid:0:14}" ]]; then mark="${D}$own${N}"  # same router, other band/SSID
-            elif [[ $c == "$chan" ]]; then mark="${Y}$same${N}"; fi
+            else
+                local cm
+                cm=$(chan_mark "$chan" "$mhz" "$c" "${f% *}")
+                if [[ $cm == same ]]; then mark="${Y}$same${N}"
+                elif [[ $cm == adjacent ]]; then mark="${Y}$adj${N}"; fi
+            fi
             printf "  %-22s ${D}%s${N} %-4s %3s%% %s\n" "$(s=${s:0:22}; printf %s "${s:-$(t "<gizli>" "<hidden>")}")" "$(t kanal ch)" "$c" "$g" "$mark"
           done
 }
