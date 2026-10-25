@@ -97,6 +97,9 @@ dns_of() { # dns_of <dev>
     fi
     printf %s "$out"
 }
+fmt_speed() { # fmt_speed <raw>
+    if [[ $1 =~ ^[0-9]+$ ]] && (( $1 > 0 )); then echo "$1 Mb/s"; else t "bilinmiyor" "unknown"; fi
+}
 ipinfo() {
     local dev=$1
     row "$(t "Yerel IP" "Local IP")" "$(ip -4 -br addr show "$dev" | awk '{print $3}')"
@@ -198,8 +201,12 @@ cmd_cable() {
         row "MAC" "$(cat /sys/class/net/"$dev"/address)"; return
     fi
     row "$(t Durum Status)" "${G}$(t Bağlı Connected)${N}"
-    row "$(t Hız Speed)"    "$(cat /sys/class/net/"$dev"/speed) Mb/s"
-    row "Duplex" "$(cat /sys/class/net/"$dev"/duplex)"
+    local sp dup
+    sp=$(cat /sys/class/net/"$dev"/speed 2>/dev/null)
+    dup=$(cat /sys/class/net/"$dev"/duplex 2>/dev/null)
+    [[ -z $dup || $dup == unknown ]] && dup=$(t "bilinmiyor" "unknown")
+    row "$(t Hız Speed)"    "$(fmt_speed "$sp")"
+    row "Duplex" "$dup"
     ipinfo "$dev"
 }
 
