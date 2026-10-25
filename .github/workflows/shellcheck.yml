@@ -1,0 +1,19 @@
+name: ShellCheck & Syntax
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  shellcheck:
+    name: ShellCheck & Syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check bash syntax
+        run: bash -n check
+
+      - name: Run ShellCheck
+        run: shellcheck -S warning check
