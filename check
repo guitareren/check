@@ -444,7 +444,8 @@ sys_gpu() {
                 gpu_model=$(cat "$card/device/product_name" 2>/dev/null)
             fi
             if [[ -z $gpu_model ]] && command -v lspci &>/dev/null; then
-                gpu_model=$(lc lspci 2>/dev/null | grep -iE 'vga|3d|display' | grep -i amd | head -1 | sed -e 's/.*: //' -e 's/ (rev .*)//')
+                local slot; slot=$(basename "$(readlink -f "$card/device")")
+                gpu_model=$(lc lspci -s "$slot" 2>/dev/null | sed -e 's/.*: //' -e 's/ (rev .*)//')
             fi
             [[ -z $gpu_model ]] && gpu_model="AMD Radeon GPU"
 
@@ -462,7 +463,7 @@ sys_gpu() {
                 fi
             fi
 
-            for h in "$card/device"/hwmon/hwmon* /sys/class/hwmon/hwmon*; do
+            for h in "$card/device"/hwmon/hwmon*; do
                 [[ -d "$h" ]] || continue
                 local hname; hname=$(cat "$h/name" 2>/dev/null)
                 if [[ $hname == amdgpu && -f "$h/temp1_input" ]]; then
@@ -489,7 +490,8 @@ sys_gpu() {
         if [[ $drv == i915 || $drv == xe ]]; then
             local gpu_model="" gpu_pct="" gpu_temp="" vram_pct="" vram_str=""
             if command -v lspci &>/dev/null; then
-                gpu_model=$(lc lspci 2>/dev/null | grep -iE 'vga|3d|display' | grep -i intel | head -1 | sed -e 's/.*: //' -e 's/ (rev .*)//')
+                local slot; slot=$(basename "$(readlink -f "$card/device")")
+                gpu_model=$(lc lspci -s "$slot" 2>/dev/null | sed -e 's/.*: //' -e 's/ (rev .*)//')
             fi
             [[ -z $gpu_model ]] && gpu_model="Intel Graphics"
 
@@ -497,7 +499,7 @@ sys_gpu() {
                 gpu_pct=$(cat "$card/device/gpu_busy_percent" 2>/dev/null | tr -d '[:space:]')
             fi
 
-            for h in "$card/device"/hwmon/hwmon* /sys/class/hwmon/hwmon*; do
+            for h in "$card/device"/hwmon/hwmon*; do
                 [[ -d "$h" ]] || continue
                 local hname; hname=$(cat "$h/name" 2>/dev/null)
                 if [[ ( $hname == i915 || $hname == xe ) && -f "$h/temp1_input" ]]; then
