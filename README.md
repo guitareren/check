@@ -68,7 +68,7 @@ sudo apt install bash network-manager iproute2 iputils-ping curl gawk grep sed c
 Clone the repo and link the script into your `PATH`:
 
 ```bash
-git clone <repo-url> check
+git clone https://github.com/guitareren/check.git
 cd check
 chmod +x check
 mkdir -p ~/.local/bin
