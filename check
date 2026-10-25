@@ -17,7 +17,8 @@ set -- "${args[@]}"
 LNG=${LNG:0:2}; LNG=${LNG,,}; [[ $LNG == tr ]] || LNG=en
 t() { if [[ $LNG == tr ]]; then printf %s "$1"; else printf %s "$2"; fi; }  # t <turkish> <english>
 
-lc() { LC_ALL=C "$@"; }
+ORIG_CTYPE=${LC_ALL:-${LC_CTYPE:-$LANG}}
+lc() { LC_ALL='' LANGUAGE='' LC_CTYPE="$ORIG_CTYPE" LC_MESSAGES=C LC_NUMERIC=C "$@"; }
 B='' D='' R='' G='' Y='' C='' N=''  # don't inherit these from the environment
 if [[ -t 1 && -z $NO_COLOR ]]; then  # no colors when piped or NO_COLOR is set
     B=$'\e[1m'; D=$'\e[2m'; R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; N=$'\e[0m'
@@ -26,7 +27,7 @@ ER='' EN=''
 if [[ -t 2 && -z $NO_COLOR ]]; then ER=$'\e[31m'; EN=$'\e[0m'; fi
 
 UNI=0
-case "${LC_ALL:-${LC_CTYPE:-$LANG}}" in
+case "$ORIG_CTYPE" in
     *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) UNI=1 ;;
 esac
 [[ -n $CHECK_ASCII ]] && UNI=0          # zorla ASCII
@@ -640,6 +641,8 @@ case "$1" in
         if command -v nmcli &>/dev/null; then
             cmd_wifi
             cmd_cable
+        else
+            echo "  ${D}$(t "(NetworkManager bulunamadı; WiFi ve kablo atlandı)" "(NetworkManager not found; skipping WiFi and cable)")${N}"
         fi
         cmd_internet
         ;;
