@@ -68,6 +68,21 @@ grade_temp() { # grade_temp <celsius>
     printf "${col}%s%s${N}" "$t" "$DEG"
 }
 iface_of() { lc nmcli -t -f DEVICE,TYPE dev | awk -F: -v t="$1" '$2==t{print $1; exit}'; }
+eth_iface() {
+    local d n def cands=()
+    def=$(ip route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+    for d in /sys/class/net/*; do
+        n=${d##*/}
+        [[ -e $d/device ]] || continue                        # sanal: lo, bridge, docker0, veth, bond, tun
+        [[ -d $d/wireless || -e $d/phy80211 ]] && continue    # WiFi
+        [[ $(cat "$d/type" 2>/dev/null) == 1 ]] || continue   # ARPHRD_ETHER
+        cands+=("$n")
+    done
+    (( ${#cands[@]} )) || return 1
+    for n in "${cands[@]}"; do [[ $n == "$def" ]] && { echo "$n"; return; }; done          # 1. default route
+    for n in "${cands[@]}"; do [[ $(cat /sys/class/net/$n/carrier 2>/dev/null) == 1 ]] && { echo "$n"; return; }; done  # 2. kablo takılı
+    echo "${cands[0]}"                                                                       # 3. ilk aday
+}
 ipinfo() {
     local dev=$1
     row "$(t "Yerel IP" "Local IP")" "$(ip -4 -br addr show "$dev" | awk '{print $3}')"
@@ -157,11 +172,11 @@ cmd_wifi() {
 }
 
 cmd_cable() {
-    if ! command -v nmcli &>/dev/null; then
-        echo "${ER}$(t "Bu komut NetworkManager (nmcli) gerektirir." "This command requires NetworkManager (nmcli).")${EN}" >&2
+    if ! command -v ip &>/dev/null; then
+        echo "${ER}$(t "Bu komut iproute2 (ip) gerektirir." "This command requires iproute2 (ip).")${EN}" >&2
         return 1
     fi
-    local dev; dev=$(iface_of ethernet)
+    local dev; dev=$(eth_iface)
     [[ -z $dev ]] && { echo "${ER}$(t "Ethernet arayüzü yok" "No Ethernet interface")${EN}" >&2; return 1; }
     title "$(t Kablo Cable) $DASH $dev"
     if [[ $(cat /sys/class/net/"$dev"/carrier 2>/dev/null) != 1 ]]; then
