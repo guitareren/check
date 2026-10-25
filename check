@@ -25,7 +25,15 @@ fi
 ER='' EN=''
 if [[ -t 2 && -z $NO_COLOR ]]; then ER=$'\e[31m'; EN=$'\e[0m'; fi
 
-title() { printf "\n${B}${C}━━ %s ━━${N}\n" "$1"; }
+UNI=0
+case "${LC_ALL:-${LC_CTYPE:-$LANG}}" in
+    *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) UNI=1 ;;
+esac
+[[ -n $CHECK_ASCII ]] && UNI=0          # zorla ASCII
+if (( UNI )); then FULL='█' EMPTY='░' LINE='━━' ARR='←' DASH='—' DOT='·' DEG='°C'
+else               FULL='#' EMPTY='-' LINE='==' ARR='<-' DASH='-'  DOT='|' DEG='C'; fi
+
+title() { printf "\n${B}${C}${LINE} %s ${LINE}${N}\n" "$1"; }
 row()   { local pad=$(( 16 - ${#1} )); (( pad < 1 )) && pad=1; printf "  ${D}%s%*s${N}%s\n" "$1" $pad "" "$2"; }
 bar() { # bar <percent>
     local p=${1%.*}
@@ -33,8 +41,8 @@ bar() { # bar <percent>
     local n=$(( p / 5 )) col=$G
     (( p < 60 )) && col=$Y; (( p < 35 )) && col=$R
     local f="" e=""
-    (( n > 0 )) && f=$(printf '█%.0s' $(seq 1 $n))
-    (( 20 - n > 0 )) && e=$(printf '░%.0s' $(seq 1 $((20 - n))))
+    (( n > 0 )) && f=$(printf -- "$FULL%.0s" $(seq 1 $n))
+    (( 20 - n > 0 )) && e=$(printf -- "$EMPTY%.0s" $(seq 1 $((20 - n))))
     printf "${col}%s${D}%s${N} %s%%" "$f" "$e" "$p"
 }
 grade() { # grade <value> <good> <fair>  (lower = better)
@@ -47,8 +55,8 @@ bar_usage() { # bar_usage <percent>  (higher = warning/alert)
     local n=$(( p / 5 )) col=$G
     (( p >= 70 )) && col=$Y; (( p > 85 )) && col=$R
     local f="" e=""
-    (( n > 0 )) && f=$(printf '█%.0s' $(seq 1 $n))
-    (( 20 - n > 0 )) && e=$(printf '░%.0s' $(seq 1 $((20 - n))))
+    (( n > 0 )) && f=$(printf -- "$FULL%.0s" $(seq 1 $n))
+    (( 20 - n > 0 )) && e=$(printf -- "$EMPTY%.0s" $(seq 1 $((20 - n))))
     printf "${col}%s${D}%s${N} %s%%" "$f" "$e" "$p"
 }
 grade_temp() { # grade_temp <celsius>
@@ -56,7 +64,7 @@ grade_temp() { # grade_temp <celsius>
     [[ -z $t || $t == "N/A" ]] && return
     local col=$G
     (( t >= 60 )) && col=$Y; (( t > 80 )) && col=$R
-    printf "${col}%s°C${N}" "$t"
+    printf "${col}%s%s${N}" "$t" "$DEG"
 }
 iface_of() { lc nmcli -t -f DEVICE,TYPE dev | awk -F: -v t="$1" '$2==t{print $1; exit}'; }
 ipinfo() {
@@ -81,7 +89,7 @@ cmd_wifi() {
     fi
     local dev; dev=$(iface_of wifi)
     [[ -z $dev ]] && { echo "${ER}$(t "WiFi arayüzü yok" "No WiFi interface")${EN}" >&2; return 1; }
-    title "WiFi — $dev"
+    title "WiFi $DASH $dev"
     local line
     line=$(lc nmcli -t -e yes -f ACTIVE,SSID,BSSID,CHAN,FREQ,RATE,SIGNAL,SECURITY dev wifi list ifname "$dev" --rescan no \
            | grep '^yes:' | sed 's/\\:/-/g')
@@ -94,12 +102,12 @@ cmd_wifi() {
     row "$(t "Bant" "Band")" "$band  ($(t kanal channel) $chan, $freq)"
     row "$(t "Hız" "Rate")" "$rate"
     row "$(t "Sinyal" "Signal")" "$(bar "$sig")"
-    [[ -n $dbm ]] && row "$(t "Seviye" "Level")" "$dbm dBm  ${D}($(t "-50 çok iyi · -67 iyi · -75 zayıf" "-50 excellent · -67 good · -75 weak"))${N}"
+    [[ -n $dbm ]] && row "$(t "Seviye" "Level")" "$dbm dBm  ${D}($(t "-50 çok iyi $DOT -67 iyi $DOT -75 zayıf" "-50 excellent $DOT -67 good $DOT -75 weak"))${N}"
     row "$(t "Güvenlik" "Security")" "$sec"
     ipinfo "$dev"
     title "$(t "Çevredeki ağlar (aynı kanal = parazit)" "Nearby networks (same channel = interference)")"
-    local same here own; same=$(t "← aynı kanal" "← same channel"); here=$(t "← bağlı" "← connected")
-    own=$(t "← aynı modem" "← same router")
+    local same here own; same=$(t "$ARR aynı kanal" "$ARR same channel"); here=$(t "$ARR bağlı" "$ARR connected")
+    own=$(t "$ARR aynı modem" "$ARR same router")
     lc nmcli -t -e yes -f BSSID,SSID,CHAN,SIGNAL dev wifi list ifname "$dev" --rescan auto | sed 's/\\:/-/g' \
         | sort -t: -k4 -nr | head -8 \
         | while IFS=: read -r b s c g; do
@@ -118,7 +126,7 @@ cmd_cable() {
     fi
     local dev; dev=$(iface_of ethernet)
     [[ -z $dev ]] && { echo "${ER}$(t "Ethernet arayüzü yok" "No Ethernet interface")${EN}" >&2; return 1; }
-    title "$(t Kablo Cable) — $dev"
+    title "$(t Kablo Cable) $DASH $dev"
     if [[ $(cat /sys/class/net/"$dev"/carrier 2>/dev/null) != 1 ]]; then
         row "$(t Durum Status)" "${R}$(t "Kablo takılı değil" "Cable not plugged in")${N}"
         row "MAC" "$(cat /sys/class/net/"$dev"/address)"; return
@@ -143,13 +151,13 @@ cmd_internet() {
         IFS=/ read -r _ avg _ jit <<<"$(sed -n 's/.*= \([0-9./]*\) ms.*/\1/p' <<<"$out")"
         if [[ -z $avg ]]; then row "Ping $label" "${R}$(t "yanıt yok" "no reply")${N}"; continue; fi
         local good=5 ok=20; [[ $name != gw ]] && good=30 ok=80
-        local jit_str="${D}—${N}"
+        local jit_str="${D}${DASH}${N}"
         [[ -n $jit ]] && jit_str="$(grade "$jit" 5 20) ms"
         row "Ping $label" "$(grade "$avg" $good $ok) ms  ${D}jitter${N} $jit_str  ${D}$(t kayıp loss)${N} $(grade "$loss" 0 2)%"
     done
     local dns; dns=$(curl -s -o /dev/null -m 5 -w '%{time_namelookup}' https://example.org)
     row "$(t "DNS çözme" "DNS lookup")" "$(grade "$(awk -v t="$dns" 'BEGIN{printf "%.0f", t*1000}')" 30 100) ms"
-    [[ $1 == speed ]] && speed
+    if [[ $1 == speed ]]; then speed; fi
 }
 
 progress() { [[ -t 1 ]] && printf "  ${D}%s${N}\r" "$1"; }  # temporary line, terminal only
