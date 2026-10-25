@@ -83,11 +83,25 @@ eth_iface() {
     for n in "${cands[@]}"; do [[ $(cat /sys/class/net/$n/carrier 2>/dev/null) == 1 ]] && { echo "$n"; return; }; done  # 2. kablo takılı
     echo "${cands[0]}"                                                                       # 3. ilk aday
 }
+dns_of() { # dns_of <dev>
+    local out
+    if command -v nmcli &>/dev/null; then
+        out=$(lc nmcli -t -f IP4.DNS dev show "$1" 2>/dev/null | cut -d: -f2 | paste -sd' ')
+    fi
+    if [[ -z $out ]] && command -v resolvectl &>/dev/null; then
+        out=$(lc resolvectl dns "$1" 2>/dev/null | sed 's/^Link [0-9]* ([^)]*): *//')
+    fi
+    if [[ -z $out && -r /etc/resolv.conf ]]; then
+        out=$(awk '$1=="nameserver"{print $2}' /etc/resolv.conf | paste -sd' ')
+        [[ -n $out ]] && out="$out  ${D}($(t "sistem geneli" "system-wide"))${N}"
+    fi
+    printf %s "$out"
+}
 ipinfo() {
     local dev=$1
     row "$(t "Yerel IP" "Local IP")" "$(ip -4 -br addr show "$dev" | awk '{print $3}')"
     row "Gateway"   "$(ip route show default dev "$dev" | awk '{print $3; exit}')"
-    row "DNS"       "$(lc nmcli -t -f IP4.DNS dev show "$dev" | cut -d: -f2 | paste -sd' ')"
+    row "DNS"       "$(dns_of "$dev")"
     row "MAC"       "$(cat /sys/class/net/"$dev"/address)"
 }
 
