@@ -91,9 +91,11 @@ cmd_wifi() {
     local dev; dev=$(iface_of wifi)
     [[ -z $dev ]] && { echo "${ER}$(t "WiFi arayüzü yok" "No WiFi interface")${EN}" >&2; return 1; }
     title "WiFi $DASH $dev"
+    local scan
+    scan=$(lc nmcli -t -e yes -f ACTIVE,SSID,BSSID,CHAN,FREQ,RATE,SIGNAL,SECURITY \
+           dev wifi list ifname "$dev" --rescan auto | sed 's/\\:/-/g')
     local line
-    line=$(lc nmcli -t -e yes -f ACTIVE,SSID,BSSID,CHAN,FREQ,RATE,SIGNAL,SECURITY dev wifi list ifname "$dev" --rescan no \
-           | grep '^yes:' | sed 's/\\:/-/g')
+    line=$(grep '^yes:' <<<"$scan")
     if [[ -z $line ]]; then echo "  ${R}$(t "Bağlı değil" "Not connected")${N}"; return; fi
     IFS=: read -r _ ssid bssid chan freq rate sig sec <<<"$line"
     local mhz=${freq% *} band; band=$(band_of "$mhz")
@@ -109,9 +111,9 @@ cmd_wifi() {
     title "$(t "Çevredeki ağlar (aynı kanal = parazit)" "Nearby networks (same channel = interference)")"
     local same here own; same=$(t "$ARR aynı kanal" "$ARR same channel"); here=$(t "$ARR bağlı" "$ARR connected")
     own=$(t "$ARR aynı modem" "$ARR same router")
-    lc nmcli -t -e yes -f BSSID,SSID,CHAN,SIGNAL dev wifi list ifname "$dev" --rescan auto | sed 's/\\:/-/g' \
-        | sort -t: -k4 -nr | head -8 \
-        | while IFS=: read -r b s c g; do
+    sort -t: -k7 -nr <<<"$scan" | head -8 \
+        | while IFS=: read -r _ s b c f _ g _; do
+            : "$f"
             mark=""
             if [[ $b == "$bssid" ]]; then mark="${G}$here${N}"
             elif [[ ${b:0:14} == "${bssid:0:14}" ]]; then mark="${D}$own${N}"  # same router, other band/SSID
