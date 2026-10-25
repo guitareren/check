@@ -184,19 +184,7 @@ mbps() { # mbps <"http_code bytes/s" lines> → sum of successful ones, or an er
     esac
 }
 
-cmd_sys() {
-    title "$(t "Sistem" "System")"
-
-    # Start CPU stat sampling as early as possible for accurate 0.2s delta
-    local u1 n1 s1 i1 w1 ir1 sr1 st1
-    local u2 n2 s2 i2 w2 ir2 sr2 st2
-    local has_stat=0
-    if [[ -f /proc/stat ]]; then
-        read -r _ u1 n1 s1 i1 w1 ir1 sr1 st1 _ < <(grep '^cpu ' /proc/stat)
-        has_stat=1
-    fi
-
-    # 1. CPU Model (Multi-tier: model name -> Hardware/Processor -> lscpu -> uname -m)
+sys_cpu_model() {
     local cpu_model=""
     if [[ -f /proc/cpuinfo ]]; then
         cpu_model=$(grep -m1 '^model name' /proc/cpuinfo | cut -d: -f2- | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//')
@@ -208,9 +196,10 @@ cmd_sys() {
         cpu_model=$(lc lscpu 2>/dev/null | grep -m1 '^Model name:' | cut -d: -f2- | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//')
     fi
     [[ -z $cpu_model ]] && cpu_model=$(uname -m)
-    cpu_model=$(echo "$cpu_model" | tr -s ' ')
+    echo "$cpu_model" | tr -s ' '
+}
 
-    # 2. CPU Temperature (Multi-tier fallback)
+sys_cpu_temp() {
     local cpu_temp="" raw_temp=""
     # Tier 1: Known hwmon CPU driver names
     for h in /sys/class/hwmon/hwmon*; do
@@ -288,7 +277,10 @@ cmd_sys() {
         fi
     fi
 
-    # 3. RAM & Swap (Tier 1: MemAvailable, Tier 2: Free+Buffers+Cached+SReclaimable)
+    echo "$cpu_temp"
+}
+
+sys_mem() {
     local mem_total=0 mem_free=0 mem_avail=0 buffers=0 cached=0 sreclaimable=0
     local swap_total=0 swap_free=0
     if [[ -f /proc/meminfo ]]; then
@@ -316,6 +308,7 @@ cmd_sys() {
         (( mem_used < 0 )) && mem_used=0
         ram_pct=$(( mem_used * 100 / mem_total ))
         ram_str=$(awk -v u="$mem_used" -v t="$mem_total" 'BEGIN{printf "%.1f / %.1f GB", u/1048576, t/1048576}')
+        row "RAM" "$(bar_usage "$ram_pct")  $ram_str"
     fi
 
     local swap_used=0 swap_pct=0 swap_str=""
@@ -324,9 +317,11 @@ cmd_sys() {
         (( swap_used < 0 )) && swap_used=0
         swap_pct=$(( swap_used * 100 / swap_total ))
         swap_str=$(awk -v u="$swap_used" -v t="$swap_total" 'BEGIN{printf "%.1f / %.1f GB", u/1048576, t/1048576}')
+        row "Swap" "$(bar_usage "$swap_pct")  $swap_str"
     fi
+}
 
-    # 4. GPU Detection (NVIDIA -> AMD -> Intel)
+sys_gpu() {
     local gpu_model="" gpu_pct="" gpu_temp="" vram_pct="" vram_str=""
 
     # 4a. NVIDIA
@@ -423,7 +418,36 @@ cmd_sys() {
         done
     fi
 
-    # 5. Finish CPU Usage calculation (0.2s delta)
+    # Print GPU (silently omitted if no GPU detected)
+    if [[ -n $gpu_model ]]; then
+        row "GPU" "$gpu_model"
+        [[ -n $gpu_pct ]] && row "$(t "GPU Kullanım" "GPU Usage")" "$(bar_usage "$gpu_pct")"
+        if [[ -n $vram_str ]]; then
+            if [[ -n $vram_pct ]]; then
+                row "$(t "GPU Bellek" "GPU VRAM")" "$(bar_usage "$vram_pct")  $vram_str"
+            else
+                row "$(t "GPU Bellek" "GPU VRAM")" "$vram_str"
+            fi
+        fi
+        [[ -n $gpu_temp ]] && row "$(t "GPU Sıcaklık" "GPU Temp")" "$(grade_temp "$gpu_temp")"
+    fi
+}
+
+cmd_sys() {
+    title "$(t "Sistem" "System")"
+
+    # Start CPU stat sampling as early as possible for accurate 0.2s delta
+    local u1 n1 s1 i1 w1 ir1 sr1 st1
+    local u2 n2 s2 i2 w2 ir2 sr2 st2
+    local has_stat=0
+    if [[ -f /proc/stat ]]; then
+        read -r _ u1 n1 s1 i1 w1 ir1 sr1 st1 _ < <(grep '^cpu ' /proc/stat)
+        has_stat=1
+    fi
+
+    local cpu_model; cpu_model=$(sys_cpu_model)
+    local cpu_temp; cpu_temp=$(sys_cpu_temp)
+
     local cpu_pct=""
     if (( has_stat )); then
         sleep 0.2
@@ -453,27 +477,12 @@ cmd_sys() {
         fi
     fi
 
-    # Output sections
     row "CPU" "$cpu_model"
     [[ -n $cpu_pct ]] && row "$(t "CPU Kullanım" "CPU Usage")" "$(bar_usage "$cpu_pct")"
     [[ -n $cpu_temp ]] && row "$(t "CPU Sıcaklık" "CPU Temp")" "$(grade_temp "$cpu_temp")"
 
-    (( mem_total > 0 )) && row "RAM" "$(bar_usage "$ram_pct")  $ram_str"
-    (( swap_total > 0 )) && row "Swap" "$(bar_usage "$swap_pct")  $swap_str"
-
-    # Print GPU (silently omitted if no GPU detected)
-    if [[ -n $gpu_model ]]; then
-        row "GPU" "$gpu_model"
-        [[ -n $gpu_pct ]] && row "$(t "GPU Kullanım" "GPU Usage")" "$(bar_usage "$gpu_pct")"
-        if [[ -n $vram_str ]]; then
-            if [[ -n $vram_pct ]]; then
-                row "$(t "GPU Bellek" "GPU VRAM")" "$(bar_usage "$vram_pct")  $vram_str"
-            else
-                row "$(t "GPU Bellek" "GPU VRAM")" "$vram_str"
-            fi
-        fi
-        [[ -n $gpu_temp ]] && row "$(t "GPU Sıcaklık" "GPU Temp")" "$(grade_temp "$gpu_temp")"
-    fi
+    sys_mem
+    sys_gpu
 }
 
 usage_tr() {
