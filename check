@@ -246,8 +246,13 @@ cmd_internet() {
         [[ -n $jit ]] && jit_str="$(grade "$jit" 5 20) ms"
         row "Ping $label" "$(grade "$avg" $good $ok) ms  ${D}jitter${N} $jit_str  ${D}$(t kayıp loss)${N} $(grade "$loss" 0 2)%"
     done
-    local dns; dns=$(curl -s -o /dev/null -m 5 -w '%{time_namelookup}' https://example.org)
-    row "$(t "DNS çözme" "DNS lookup")" "$(grade "$(awk -v t="$dns" 'BEGIN{printf "%.0f", t*1000}')" 30 100) ms"
+    local dns rc
+    dns=$(curl -s -o /dev/null -m 5 --noproxy '*' -w '%{time_namelookup}' https://example.org); rc=$?
+    if (( rc == 6 )) || awk -v t="$dns" 'BEGIN{exit !(t <= 0)}'; then
+        row "$(t "DNS çözme" "DNS lookup")" "${R}$(t "ölçülemedi (isim çözülemedi)" "failed (could not resolve)")${N}"
+    else
+        row "$(t "DNS çözme" "DNS lookup")" "$(grade "$(awk -v t="$dns" 'BEGIN{printf "%.0f", t*1000}')" 30 100) ms"
+    fi
     if [[ $1 == speed ]]; then speed; fi
 }
 
