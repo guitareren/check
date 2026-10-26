@@ -137,7 +137,7 @@ cmd_wifi() {
         return 1
     fi
     local dev; dev=$(iface_of wifi)
-    [[ -z $dev ]] && { echo "${ER}$(t "WiFi arayüzü yok" "No WiFi interface")${EN}" >&2; return 1; }
+    [[ -z $dev ]] && { [[ $1 == quiet ]] || echo "${ER}$(t "WiFi arayüzü yok" "No WiFi interface")${EN}" >&2; return 1; }
     title "WiFi $DASH $dev"
     local scan
     scan=$(lc nmcli -t -e yes -f ACTIVE,SSID,BSSID,CHAN,FREQ,RATE,SIGNAL,SECURITY \
@@ -206,7 +206,7 @@ cmd_cable() {
         return 1
     fi
     local dev; dev=$(eth_iface)
-    [[ -z $dev ]] && { echo "${ER}$(t "Ethernet arayüzü yok" "No Ethernet interface")${EN}" >&2; return 1; }
+    [[ -z $dev ]] && { [[ $1 == quiet ]] || echo "${ER}$(t "Ethernet arayüzü yok" "No Ethernet interface")${EN}" >&2; return 1; }
     title "$(t Kablo Cable) $DASH $dev"
     if [[ $(cat /sys/class/net/"$dev"/carrier 2>/dev/null) != 1 ]]; then
         row "$(t Durum Status)" "${R}$(t "Kablo takılı değil" "Cable not plugged in")${N}"
@@ -769,11 +769,11 @@ case "$1" in
     sys|sistem|system) cmd_sys ;;
     all|"")
         if command -v nmcli &>/dev/null; then
-            cmd_wifi
+            cmd_wifi quiet
         else
             echo "  ${ED}$(t "(NetworkManager bulunamadı; WiFi atlandı)" "(NetworkManager not found; skipping WiFi)")${EN}" >&2
         fi
-        cmd_cable
+        cmd_cable quiet
         cmd_internet
         ;;
     *) { echo "${ER}$(t "Bilinmeyen komut:" "Unknown command:")${EN} $1"; echo "$(t "Yardım için" "For help"): check --help"
