@@ -90,19 +90,119 @@ eth_iface() {
     for n in "${cands[@]}"; do [[ $(cat /sys/class/net/$n/carrier 2>/dev/null) == 1 ]] && { echo "$n"; return; }; done  # 2. kablo takılı
     echo "${cands[0]}"                                                                       # 3. ilk aday
 }
-dns_of() { # dns_of <dev>
-    local out
-    if command -v nmcli &>/dev/null; then
-        out=$(lc nmcli -t -f IP4.DNS dev show "$1" 2>/dev/null | cut -d: -f2 | paste -sd' ')
+dns_provider() { # dns_provider <ip> [gw]
+    local ip=${1%%%*} gw=${2%%%*}
+    ip=${ip// /}; ip=${ip,,}
+    gw=${gw// /}; gw=${gw,,}
+    [[ -z $ip ]] && return 0
+    if [[ -n $gw && $ip == "$gw" ]]; then
+        t Modem Router
+        return 0
     fi
-    if [[ -z $out ]] && command -v resolvectl &>/dev/null; then
-        out=$(lc resolvectl dns "$1" 2>/dev/null | sed 's/^Link [0-9]* ([^)]*): *//')
+    case "$ip" in
+        1.1.1.[1-3]|1.0.0.[1-3]|2606:4700:*) echo "Cloudflare" ;;
+        8.8.8.8|8.8.4.4|2001:4860:*) echo "Google" ;;
+        9.9.9.9|9.9.9.1[0-9]|149.112.112.*|2620:fe::*) echo "Quad9" ;;
+        208.67.220.*|208.67.222.*|2620:119:35::*|2620:119:53::*) echo "OpenDNS" ;;
+        94.140.14.*|94.140.15.*|2a10:50c0::*) echo "AdGuard" ;;
+        76.76.2.*|76.76.10.*|2606:1a40::*|2606:1a40:1::*) echo "Control D" ;;
+        194.242.2.[2-9]|2a07:e340::*) echo "Mullvad" ;;
+        185.228.168.*|185.228.169.*|2a0d:2a00:1::*|2a0d:2a00:2::*) echo "CleanBrowsing" ;;
+        127.0.0.53|127.0.0.54) echo "systemd-resolved" ;;
+        127.0.0.1|::1) t "Yerel (localhost)" "Local (localhost)" ;;
+        10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*|fe80:*|fd*|fc*) t "Yerel ağ" "Local network" ;;
+        *) ;;
+    esac
+}
+
+fmt_dns() { # fmt_dns <raw_ips> [gw]
+    local raw=$1 gw=$2
+    raw=${raw//,/ }
+    raw=${raw//$'\n'/ }
+    local -a raw_arr
+    read -r -a raw_arr <<<"$raw"
+    local ips=() ip
+    for ip in "${raw_arr[@]}"; do
+        [[ -z $ip ]] && continue
+        ip=${ip%%%*}
+        local seen=0 u
+        for u in "${ips[@]}"; do
+            if [[ $u == "$ip" ]]; then seen=1; break; fi
+        done
+        (( seen )) || ips+=("$ip")
+    done
+    if (( ${#ips[@]} == 0 )); then
+        printf "%s" "${D}${DASH}${N}"
+        return 0
+    fi
+
+    local provs=()
+    for ip in "${ips[@]}"; do
+        provs+=("$(dns_provider "$ip" "$gw")")
+    done
+
+    local all_same=1 first_prov="${provs[0]}" p
+    for p in "${provs[@]}"; do
+        if [[ $p != "$first_prov" ]]; then
+            all_same=0
+            break
+        fi
+    done
+
+    local ip_str=""
+    for ip in "${ips[@]}"; do
+        if [[ -z $ip_str ]]; then
+            ip_str="$ip"
+        else
+            ip_str="$ip_str, $ip"
+        fi
+    done
+
+    if (( all_same )); then
+        if [[ -n $first_prov ]]; then
+            printf "%s  %s(%s)%s" "$ip_str" "$D" "$first_prov" "$N"
+        else
+            printf "%s" "$ip_str"
+        fi
+    else
+        local parts=() i
+        for (( i=0; i<${#ips[@]}; i++ )); do
+            local prov="${provs[i]}"
+            if [[ -n $prov ]]; then
+                parts+=("${ips[i]}  ${D}($prov)${N}")
+            else
+                parts+=("${ips[i]}")
+            fi
+        done
+        local out=""
+        for p in "${parts[@]}"; do
+            if [[ -z $out ]]; then
+                out="$p"
+            else
+                out="$out, $p"
+            fi
+        done
+        printf "%s" "$out"
+    fi
+}
+
+dns_of() { # dns_of [dev]
+    local dev=$1
+    if [[ -z $dev ]]; then
+        dev=$(ip route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+    fi
+    local gw; gw=$(gw_of "$dev")
+    local out=""
+    if [[ -n $dev ]] && command -v nmcli &>/dev/null; then
+        out=$(lc nmcli -t -f IP4.DNS,IP6.DNS dev show "$dev" 2>/dev/null | grep -E '^IP[46]\.DNS' | cut -d: -f2- | paste -sd' ')
+    fi
+    if [[ -z $out && -n $dev ]] && command -v resolvectl &>/dev/null; then
+        out=$(lc resolvectl dns "$dev" 2>/dev/null | sed 's/^Link [0-9]* ([^)]*): *//')
     fi
     if [[ -z $out && -r /etc/resolv.conf ]]; then
-        out=$(awk '$1=="nameserver"{print $2}' /etc/resolv.conf | paste -sd' ')
-        [[ -n $out ]] && out="$out  ${D}($(t "sistem geneli" "system-wide"))${N}"
+        out=$(awk '$1=="nameserver"{print $2}' /etc/resolv.conf 2>/dev/null | paste -sd' ')
     fi
-    printf %s "$out"
+    fmt_dns "$out" "$gw"
 }
 fmt_speed() { # fmt_speed <raw>
     if [[ $1 =~ ^[0-9]+$ ]] && (( $1 > 0 )); then echo "$1 Mb/s"; else t "bilinmiyor" "unknown"; fi
@@ -255,6 +355,7 @@ cmd_internet() {
     else
         row "$(t "DNS çözme" "DNS lookup")" "$(grade "$(awk -v t="$dns" 'BEGIN{printf "%.0f", t*1000}')" 30 100) ms"
     fi
+    row "DNS" "$(dns_of)"
     if [[ $1 == speed ]]; then speed; fi
 }
 
@@ -650,18 +751,18 @@ ${B}KOMUTLAR${N}
                     • Ağ adı (SSID) ve BSSID (modemin hangi bandı)
                     • Bant (2.4 / 5 / 6 GHz), kanal, frekans, bağlantı hızı (iw)
                     • Sinyal yüzdesi (renkli çubuk) ve dBm değeri
-                    • Yerel IP, gateway (modem), DNS, MAC adresi
+                    • Yerel IP, gateway (modem), DNS (sağlayıcı etiketiyle), MAC adresi
                     • Çevredeki ağlar; aynı ve komşu kanaldakiler işaretlenir (parazit)
 
   ${G}cable${N}, ${G}kablo${N}      Ethernet bağlantısı:
                     • Kablo takılı mı, bağlantı hızı (Mb/s), duplex
-                    • Yerel IP, gateway, DNS, MAC
+                    • Yerel IP, gateway, DNS (sağlayıcı etiketiyle), MAC
 
   ${G}internet${N}, ${G}net${N}     İnternet bağlantı kalitesi:
                     • Dış (public) IP ve Cloudflare sunucu konumu
                     • Modem, Cloudflare (1.1.1.1), Google (8.8.8.8) ping'i
                       → ortalama gecikme, jitter (ping mdev, yaklaşık), paket kaybı
-                    • DNS çözme süresi
+                    • DNS çözme süresi ve DNS sunucuları (sağlayıcı etiketiyle)
 
   ${G}speed${N}, ${G}hiz${N}        internet + hız testi (Cloudflare, ~20 sn):
                     • İndirme (4 paralel bağlantı) ve yükleme hızı, Mbps
@@ -711,18 +812,18 @@ ${B}COMMANDS${N}
                     • Network name (SSID) and BSSID (which router band)
                     • Band (2.4 / 5 / 6 GHz), channel, frequency, link rate (iw)
                     • Signal percentage (colored bar) and dBm value
-                    • Local IP, gateway (router), DNS, MAC address
+                    • Local IP, gateway (router), DNS (with provider label), MAC address
                     • Nearby networks; same and adjacent channels are marked (interference)
 
   ${G}cable${N}, ${G}kablo${N}      Ethernet connection:
                     • Cable plugged in or not, link speed (Mb/s), duplex
-                    • Local IP, gateway, DNS, MAC
+                    • Local IP, gateway, DNS (with provider label), MAC
 
   ${G}internet${N}, ${G}net${N}     Internet connection quality:
                     • Public IP and Cloudflare server location
                     • Ping to router, Cloudflare (1.1.1.1), Google (8.8.8.8)
                       → average latency, jitter (ping mdev, approximate), packet loss
-                    • DNS lookup time
+                    • DNS lookup time and DNS servers (with provider label)
 
   ${G}speed${N}, ${G}hiz${N}        internet + speed test (Cloudflare, ~20 s):
                     • Download (4 parallel connections) and upload speed, Mbps
