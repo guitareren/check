@@ -38,6 +38,7 @@ title() { printf "\n${B}${C}${LINE} %s ${LINE}${N}\n" "$1"; }
 row()   { local pad=$(( 16 - ${#1} )); (( pad < 1 )) && pad=1; printf "  ${D}%s%*s${N}%s\n" "$1" $pad "" "$2"; }
 bar() { # bar <percent>
     local p=${1%.*}
+    [[ $p =~ ^-?[0-9]+$ ]] || { printf "%s" "${D}${DASH}${N}"; return; }
     (( p < 0 )) && p=0; (( p > 100 )) && p=100
     local n=$(( p / 5 )) col=$G
     (( p < 60 )) && col=$Y; (( p < 35 )) && col=$R
@@ -52,6 +53,7 @@ grade() { # grade <value> <good> <fair>  (lower = better)
 }
 bar_usage() { # bar_usage <percent>  (higher = warning/alert)
     local p=${1%.*}
+    [[ $p =~ ^-?[0-9]+$ ]] || { printf "%s" "${D}${DASH}${N}"; return; }
     (( p < 0 )) && p=0; (( p > 100 )) && p=100
     local n=$(( p / 5 )) col=$G
     (( p >= 70 )) && col=$Y; (( p > 85 )) && col=$R
@@ -62,7 +64,7 @@ bar_usage() { # bar_usage <percent>  (higher = warning/alert)
 }
 grade_temp() { # grade_temp <celsius>
     local t=$1
-    [[ -z $t || $t == "N/A" ]] && return
+    [[ $t =~ ^-?[0-9]+$ ]] || return
     local col=$G
     (( t >= 60 )) && col=$Y; (( t > 80 )) && col=$R
     printf "${col}%s%s${N}" "$t" "$DEG"
@@ -411,29 +413,50 @@ print_gpu() { # print_gpu <label> <model> <usage_pct> <vram_pct> <vram_str> <tem
     [[ -n $temp ]] && row "$(t "$lbl Sıcaklık" "$lbl Temp")" "$(grade_temp "$temp")"
 }
 
+has_nvidia_gpu() { # PCI'da NVIDIA (vendor 0x10de) ekran denetleyicisi (class 0x03xxxx) var mı?
+    local d
+    for d in /sys/bus/pci/devices/*; do
+        [[ $(cat "$d/vendor" 2>/dev/null) == 0x10de && $(cat "$d/class" 2>/dev/null) == 0x03* ]] && return 0
+    done
+    return 1
+}
+
 sys_gpu() {
     local gpus_model=() gpus_pct=() gpus_vram_pct=() gpus_vram_str=() gpus_temp=()
 
     # 4a. NVIDIA
+    local nv_state=""            # "" = sorun yok, "fail" = nvidia-smi başarısız, "missing" = nvidia-smi yok
     if command -v nvidia-smi &>/dev/null; then
-        while IFS=',' read -r name pct vu vt temp; do
-            [[ -z $name ]] && continue
-            name=$(echo "$name" | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//')
-            pct=$(echo "$pct" | tr -d '[:space:]')
-            vu=$(echo "$vu" | tr -d '[:space:]')
-            vt=$(echo "$vt" | tr -d '[:space:]')
-            temp=$(echo "$temp" | tr -d '[:space:]')
-            local v_pct="" v_str=""
-            if [[ $vt =~ ^[0-9]+$ && $vt -gt 0 && $vu =~ ^[0-9]+$ ]]; then
-                v_pct=$(( vu * 100 / vt ))
-                v_str=$(awk -v u="$vu" -v t="$vt" 'BEGIN{if(t>=1024) printf "%.1f / %.1f GB", u/1024, t/1024; else printf "%d / %d MB", u, t}')
-            fi
-            gpus_model+=("$name")
-            gpus_pct+=("$pct")
-            gpus_vram_pct+=("$v_pct")
-            gpus_vram_str+=("$v_str")
-            gpus_temp+=("$temp")
-        done < <(lc nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null)
+        local nv_out nv_line
+        if nv_out=$(lc nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu \
+                    --format=csv,noheader,nounits 2>/dev/null) && [[ -n $nv_out ]]; then
+            while IFS= read -r nv_line; do
+                [[ $nv_line =~ ^[^,]+(,[^,]*){4}$ ]] || continue     # tam 5 alan yoksa (hata mesajı vb.) atla
+                IFS=',' read -r name pct vu vt temp <<<"$nv_line"
+                [[ -z $name ]] && continue
+                name=$(echo "$name" | sed -e 's/^[ \t]*//' -e 's/[ \t]*$//')
+                pct=$(echo "$pct" | tr -d '[:space:]')
+                vu=$(echo "$vu" | tr -d '[:space:]')
+                vt=$(echo "$vt" | tr -d '[:space:]')
+                temp=$(echo "$temp" | tr -d '[:space:]')
+                [[ $pct  =~ ^[0-9]+$ ]] || pct=""
+                [[ $temp =~ ^[0-9]+$ ]] || temp=""
+                local v_pct="" v_str=""
+                if [[ $vt =~ ^[0-9]+$ && $vt -gt 0 && $vu =~ ^[0-9]+$ ]]; then
+                    v_pct=$(( vu * 100 / vt ))
+                    v_str=$(awk -v u="$vu" -v t="$vt" 'BEGIN{if(t>=1024) printf "%.1f / %.1f GB", u/1024, t/1024; else printf "%d / %d MB", u, t}')
+                fi
+                gpus_model+=("$name")
+                gpus_pct+=("$pct")
+                gpus_vram_pct+=("$v_pct")
+                gpus_vram_str+=("$v_str")
+                gpus_temp+=("$temp")
+            done <<<"$nv_out"
+        else
+            nv_state=fail
+        fi
+    else
+        nv_state=missing
     fi
 
     # 4b. AMD
@@ -454,6 +477,7 @@ sys_gpu() {
             if [[ -f "$card/device/gpu_busy_percent" ]]; then
                 gpu_pct=$(cat "$card/device/gpu_busy_percent" 2>/dev/null | tr -d '[:space:]')
             fi
+            [[ $gpu_pct =~ ^[0-9]+$ ]] || gpu_pct=""
 
             if [[ -f "$card/device/mem_info_vram_used" && -f "$card/device/mem_info_vram_total" ]]; then
                 local vu vt
@@ -500,6 +524,7 @@ sys_gpu() {
             if [[ -f "$card/device/gpu_busy_percent" ]]; then
                 gpu_pct=$(cat "$card/device/gpu_busy_percent" 2>/dev/null | tr -d '[:space:]')
             fi
+            [[ $gpu_pct =~ ^[0-9]+$ ]] || gpu_pct=""
 
             for h in "$card/device"/hwmon/hwmon*; do
                 [[ -d "$h" ]] || continue
@@ -529,6 +554,14 @@ sys_gpu() {
         for (( i=0; i<count; i++ )); do
             print_gpu "GPU $i" "${gpus_model[i]}" "${gpus_pct[i]}" "${gpus_vram_pct[i]}" "${gpus_vram_str[i]}" "${gpus_temp[i]}"
         done
+    fi
+
+    if [[ -n $nv_state ]] && has_nvidia_gpu; then
+        if [[ $nv_state == fail ]]; then
+            row "NVIDIA" "${Y}$(t "kart bulundu ama sürücüye ulaşılamıyor (nvidia-smi başarısız)" "card found but driver not reachable (nvidia-smi failed)")${N}"
+        else
+            row "NVIDIA" "${D}$(t "kart bulundu; nvidia-smi yok (sürücü kurulu olmayabilir)" "card found; nvidia-smi not installed (driver may be missing)")${N}"
+        fi
     fi
 }
 
