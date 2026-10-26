@@ -147,14 +147,16 @@ cmd_wifi() {
     if [[ -z $line ]]; then echo "  ${R}$(t "Bağlı değil" "Not connected")${N}"; return; fi
     IFS=: read -r _ ssid bssid chan freq rate sig sec <<<"$line"
     local mhz=${freq% *} band; band=$(band_of "$mhz")
-    local dbm; dbm=$(awk -v d="$dev:" '$1==d{gsub(/\./,"",$4); print $4}' /proc/net/wireless)
+    local iw link=""
+    iw=$(command -v iw || { [[ -x /usr/sbin/iw ]] && echo /usr/sbin/iw; })
+    [[ -n $iw ]] && link=$(lc "$iw" dev "$dev" link 2>/dev/null)
+    local dbm; dbm=$(awk -v d="$dev:" '$1==d{gsub(/\./,"",$4); print $4}' /proc/net/wireless 2>/dev/null)
+    [[ -z $dbm && -n $link ]] && dbm=$(sed -n 's/.*signal:[ \t]*\(-*[0-9]*\).*/\1/p' <<<"$link")
     row "$(t "Ağ (SSID)" "Network (SSID)")" "${B}$ssid${N}"
     row "BSSID"     "${bssid//-/:}"
     row "$(t "Bant" "Band")" "$band  ($(t kanal channel) $chan, $freq)"
-    local iw; iw=$(command -v iw || { [[ -x /usr/sbin/iw ]] && echo /usr/sbin/iw; })
     local speed_str=""
-    if [[ -n $iw ]]; then
-        local link; link=$(lc "$iw" dev "$dev" link 2>/dev/null)
+    if [[ -n $link ]]; then
         local rx; rx=$(sed -n 's/.*rx bitrate:[ \t]*\([0-9.]*\).*/\1/p' <<<"$link")
         local tx; tx=$(sed -n 's/.*tx bitrate:[ \t]*\([0-9.]*\).*/\1/p' <<<"$link")
         if [[ -n $rx && -n $tx ]]; then
