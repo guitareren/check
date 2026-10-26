@@ -70,6 +70,11 @@ grade_temp() { # grade_temp <celsius>
     printf "${col}%s%s${N}" "$t" "$DEG"
 }
 iface_of() { lc nmcli -t -f DEVICE,TYPE dev | awk -F: -v t="$1" '$2==t{print $1; exit}'; }
+gw_of() { # gw_of [dev]  → ilk "via" adresi; yoksa boş
+    if [[ -n $1 ]]; then ip route show default dev "$1" 2>/dev/null
+    else                 ip route show default 2>/dev/null; fi \
+        | awk '{for(i=1;i<NF;i++) if($i=="via"){print $(i+1); exit}}'
+}
 eth_iface() {
     local d n def cands=()
     def=$(ip route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
@@ -105,7 +110,8 @@ fmt_speed() { # fmt_speed <raw>
 ipinfo() {
     local dev=$1
     row "$(t "Yerel IP" "Local IP")" "$(ip -4 -br addr show "$dev" | awk '{print $3}')"
-    row "Gateway"   "$(ip route show default dev "$dev" | awk '{print $3; exit}')"
+    local gw; gw=$(gw_of "$dev")
+    row "Gateway"   "${gw:-${D}${DASH}${N}}"
     row "DNS"       "$(dns_of "$dev")"
     row "MAC"       "$(cat /sys/class/net/"$dev"/address)"
 }
@@ -216,13 +222,21 @@ cmd_cable() {
 
 cmd_internet() {
     title "$(t İnternet Internet)"
-    local gw; gw=$(ip route show default | awk '{print $3; exit}')
+    local gw; gw=$(gw_of)
     local trace; trace=$(curl -s -m 5 https://1.1.1.1/cdn-cgi/trace)
     row "$(t "Dış IP" "Public IP")" "$(grep ^ip= <<<"$trace" | cut -d= -f2)"
     row "$(t Konum Location)" "$(grep ^loc= <<<"$trace" | cut -d= -f2)  ${D}(Cloudflare $(grep ^colo= <<<"$trace" | cut -d= -f2))${N}"
     for tg in "gw:$gw" "Cloudflare:1.1.1.1" "Google:8.8.8.8"; do
         local name=${tg%%:*} host=${tg#*:} out
         local label=$name; [[ $name == gw ]] && label=$(t Modem Router)
+        if [[ $name == gw && -z $host ]]; then
+            if [[ -z $(ip route show default 2>/dev/null) ]]; then
+                row "Ping $label" "${R}$(t "varsayılan rota yok (ağ bağlantısı yok)" "no default route (not connected)")${N}"
+            else
+                row "Ping $label" "${D}$(t "gateway yok (VPN/doğrudan bağlantı)" "no gateway (VPN/point-to-point)")${N}"
+            fi
+            continue
+        fi
         out=$(lc ping -c 10 -i 0.2 -W 1 "$host" 2>/dev/null)
         local loss; loss=$(sed -n 's/.* \([0-9.]*\)% packet loss.*/\1/p' <<<"$out")
         IFS=/ read -r _ avg _ jit <<<"$(sed -n 's/.*= \([0-9./]*\) ms.*/\1/p' <<<"$out")"
