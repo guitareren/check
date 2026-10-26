@@ -660,7 +660,7 @@ ${B}KOMUTLAR${N}
   ${G}internet${N}, ${G}net${N}     İnternet bağlantı kalitesi:
                     • Dış (public) IP ve Cloudflare sunucu konumu
                     • Modem, Cloudflare (1.1.1.1), Google (8.8.8.8) ping'i
-                      → ortalama gecikme, jitter (dalgalanma), paket kaybı
+                      → ortalama gecikme, jitter (ping mdev, yaklaşık), paket kaybı
                     • DNS çözme süresi
 
   ${G}speed${N}, ${G}hiz${N}        internet + hız testi (Cloudflare, ~20 sn):
@@ -668,8 +668,8 @@ ${B}KOMUTLAR${N}
 
   ${G}sys${N}, ${G}sistem${N}       Sistem kaynakları ve donanım monitörü:
                     • CPU modeli, anlık kullanım % ve sıcaklığı
-                    • RAM ve Swap bellek kullanımı (GB ve yüzde)
-                    • GPU modeli, kullanım %, VRAM ve sıcaklık (NVIDIA/AMD/Intel)
+                    • RAM ve Swap bellek kullanımı (GiB ve yüzde)
+                    • GPU modeli ve sıcaklık (NVIDIA/AMD/Intel); kullanım % ve VRAM yalnızca NVIDIA/AMD
 
   ${G}all${N} (veya boş)    wifi + cable + internet (hız testi hariç)
 
@@ -721,7 +721,7 @@ ${B}COMMANDS${N}
   ${G}internet${N}, ${G}net${N}     Internet connection quality:
                     • Public IP and Cloudflare server location
                     • Ping to router, Cloudflare (1.1.1.1), Google (8.8.8.8)
-                      → average latency, jitter, packet loss
+                      → average latency, jitter (ping mdev, approximate), packet loss
                     • DNS lookup time
 
   ${G}speed${N}, ${G}hiz${N}        internet + speed test (Cloudflare, ~20 s):
@@ -729,8 +729,8 @@ ${B}COMMANDS${N}
 
   ${G}sys${N}, ${G}sistem${N}       System resources and hardware monitor:
                     • CPU model, real-time utilization % and temperature
-                    • RAM and Swap memory usage (GB and percentage)
-                    • GPU model, utilization %, VRAM, and temperature (NVIDIA/AMD/Intel)
+                    • RAM and Swap memory usage (GiB and percentage)
+                    • GPU model and temperature (NVIDIA/AMD/Intel); utilization % and VRAM NVIDIA/AMD only
 
   ${G}all${N} (or empty)    wifi + cable + internet (no speed test)
 

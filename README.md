@@ -12,9 +12,9 @@ Available in **English** and **Turkish** (see [Language](#language)).
 
 - **`check wifi`**: the connected network (SSID, BSSID), band (2.4 / 5 / 6 GHz for WiFi 6E/7), channel, frequency, real-time link bitrate (via `iw`, with AP max rate fallback), signal strength (as a percentage bar and in dBm), local IP, gateway, DNS, and MAC. It also lists nearby networks and marks networks on **your channel** and **adjacent channels** (in 2.4 GHz, within ±4 channels) that can cause interference.
 - **`check cable`**: whether a cable is plugged in, plus link speed (Mb/s; displays "unknown" if unnegotiated or in VMs), duplex, local IP, gateway, DNS (resolved via fallback: `nmcli` → `resolvectl` → `/etc/resolv.conf`), and MAC. Runs completely without NetworkManager.
-- **`check internet`**: your public IP, ping to the router, Cloudflare (1.1.1.1), and Google (8.8.8.8) with average latency, jitter, and packet loss, and DNS lookup time.
+- **`check internet`**: your public IP, ping to the router, Cloudflare (1.1.1.1), and Google (8.8.8.8) with average latency, jitter (ping mdev, approximate), and packet loss, and DNS lookup time.
 - **`check speed`**: everything in `internet`, plus a download/upload speed test via Cloudflare (about 20 seconds).
-- **`check sys`** (or **`check sistem`**): real-time system and hardware monitor (~0.2s). CPU model, usage percentage bar, and temperature; RAM and Swap usage (in GB and percentage bar); multi-GPU support for NVIDIA, AMD, and Intel (numbered `GPU 0`, `GPU 1`, etc. when multiple GPUs are present, or simply `GPU` for a single card; GPU lines are cleanly hidden on headless servers or VMs without a GPU).
+- **`check sys`** (or **`check sistem`**): real-time system and hardware monitor (~0.2s). CPU model, usage percentage bar, and temperature; RAM and Swap usage (in GiB and percentage bar); multi-GPU support for NVIDIA, AMD, and Intel (GPU model and temperature; utilization % and VRAM for NVIDIA/AMD only; numbered `GPU 0`, `GPU 1`, etc. when multiple GPUs are present, or simply `GPU` for a single card; GPU lines are cleanly hidden on headless servers or VMs without a GPU).
 - **`check`** with no arguments: wifi + cable + internet (no speed test).
 - **`check -h`**: detailed help.
 
@@ -101,12 +101,12 @@ Make sure `~/.local/bin` is in your `PATH`, then run `check -h`.
 
 - WiFi details come from `nmcli` and `iw` (real rx/tx bitrates, falling back to AP max rate if `iw` is absent), frequency is evaluated to determine 2.4 GHz, 5 GHz, or 6 GHz (WiFi 6E/7), nearby networks highlight same and adjacent (±4 channels on 2.4 GHz) channel interference, and signal in dBm from `/proc/net/wireless`.
 - Ethernet details come from sysfs (`/sys/class/net/<device>/`), without requiring NetworkManager. Interface discovery filters physical interfaces from virtual/WiFi ones. DNS resolution resolves via fallback chain (`nmcli` → `resolvectl` → `/etc/resolv.conf`). Unknown link speeds (such as in VMs with `-1`) and unknown duplex states display cleanly as "unknown" / "bilinmiyor".
-- Ping stats come from 10 quick pings per target; jitter is displayed with clean dash (`—` / `-`) fallback when unavailable.
+- Ping stats come from 10 quick pings per target; jitter (ping mdev, approximate) is displayed with clean dash (`—` / `-`) fallback when unavailable.
 - The speed test runs 4 parallel 25 MB downloads from Cloudflare and adds up their speeds, then does a 25 MB upload.
 - System metrics (`sys`) utilize a modular multi-tier fallback architecture:
   - **CPU**: Model via `/proc/cpuinfo` (with ARM/Raspberry Pi and `lscpu` fallback). Real-time CPU % via 0.2s delta from `/proc/stat` (with `/proc/loadavg` fallback). Temperatures via hwmon drivers (`k10temp`, `zenpower`, `coretemp`, `cpu_thermal`), thermal labels (`Tctl`, `Package`, `CPU`), ACPI thermal zones, or `sensors` (silently omitted on VM/sensorless platforms).
-  - **RAM & Swap**: `MemAvailable` from `/proc/meminfo` (with `MemFree + Buffers + Cached` fallback). Swap is displayed when configured (`SwapTotal > 0`).
-  - **GPU**: Multi-GPU support covering NVIDIA (via `nvidia-smi`), AMD (via DRM sysfs and `amdgpu` hwmon), and Intel (via DRM sysfs and `i915`/`xe` hwmon). When multiple GPUs are detected, each card is cleanly enumerated (`GPU 0`, `GPU 1`, ...). If no GPU is present or on headless servers, GPU lines are automatically hidden.
+  - **RAM & Swap**: `MemAvailable` from `/proc/meminfo` (with `MemFree + Buffers + Cached` fallback) in GiB. Swap is displayed when configured (`SwapTotal > 0`).
+  - **GPU**: Multi-GPU support covering NVIDIA (via `nvidia-smi`), AMD (via DRM sysfs and `amdgpu` hwmon), and Intel (via DRM sysfs and `i915`/`xe` hwmon; utilization % and VRAM are available for NVIDIA and AMD, while Intel reports model and temperature). When multiple GPUs are detected, each card is cleanly enumerated (`GPU 0`, `GPU 1`, ...). If no GPU is present or on headless servers, GPU lines are automatically hidden.
 - External commands whose outputs are parsed are executed via a C-locale wrapper (`lc`), preventing locale mismatches across different system languages while preserving the user's native UTF-8 locale for terminal display and padding.
 - Colors are turned off when the output is piped or `NO_COLOR` is set. Errors go to stderr with exit code 1.
 
