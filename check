@@ -405,7 +405,7 @@ sys_mem() {
         fi
         (( mem_used < 0 )) && mem_used=0
         ram_pct=$(( mem_used * 100 / mem_total ))
-        ram_str=$(awk -v u="$mem_used" -v t="$mem_total" 'BEGIN{printf "%.1f / %.1f GB", u/1048576, t/1048576}')
+        ram_str=$(awk -v u="$mem_used" -v t="$mem_total" 'BEGIN{printf "%.1f / %.1f GiB", u/1048576, t/1048576}')
         row "RAM" "$(bar_usage "$ram_pct")  $ram_str"
     fi
 
@@ -414,7 +414,7 @@ sys_mem() {
         swap_used=$(( swap_total - swap_free ))
         (( swap_used < 0 )) && swap_used=0
         swap_pct=$(( swap_used * 100 / swap_total ))
-        swap_str=$(awk -v u="$swap_used" -v t="$swap_total" 'BEGIN{printf "%.1f / %.1f GB", u/1048576, t/1048576}')
+        swap_str=$(awk -v u="$swap_used" -v t="$swap_total" 'BEGIN{printf "%.1f / %.1f GiB", u/1048576, t/1048576}')
         row "Swap" "$(bar_usage "$swap_pct")  $swap_str"
     fi
 }
@@ -465,7 +465,7 @@ sys_gpu() {
                 local v_pct="" v_str=""
                 if [[ $vt =~ ^[0-9]+$ && $vt -gt 0 && $vu =~ ^[0-9]+$ ]]; then
                     v_pct=$(( vu * 100 / vt ))
-                    v_str=$(awk -v u="$vu" -v t="$vt" 'BEGIN{if(t>=1024) printf "%.1f / %.1f GB", u/1024, t/1024; else printf "%d / %d MB", u, t}')
+                    v_str=$(awk -v u="$vu" -v t="$vt" 'BEGIN{if(t>=1024) printf "%.1f / %.1f GiB", u/1024, t/1024; else printf "%d / %d MiB", u, t}')
                 fi
                 gpus_model+=("$name")
                 gpus_pct+=("$pct")
@@ -506,7 +506,7 @@ sys_gpu() {
                 vt=$(cat "$card/device/mem_info_vram_total" 2>/dev/null | tr -d '[:space:]')
                 if [[ $vt =~ ^[0-9]+$ && $vt -gt 0 && $vu =~ ^[0-9]+$ ]]; then
                     vram_pct=$(( (vu * 100) / vt ))
-                    vram_str=$(awk -v u="$vu" -v t="$vt" 'BEGIN{printf "%.1f / %.1f GB", u/1073741824, t/1073741824}')
+                    vram_str=$(awk -v u="$vu" -v t="$vt" 'BEGIN{printf "%.1f / %.1f GiB", u/1073741824, t/1073741824}')
                 fi
             fi
 
