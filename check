@@ -739,9 +739,16 @@ cmd_sys() {
     sys_gpu
 }
 
+cmd_info() {
+    printf "%s%scheck%s — %s (%s)\n" \
+        "$B" "$C" "$N" \
+        "$(t "ağ ve sistem durumu kontrol aracı" "network and system status tool")" \
+        "https://github.com/guitareren/check"
+}
+
 usage_tr() {
     cat <<EOF
-${B}${C}check${N} — ağ ve sistem durumu kontrol aracı
+${B}${C}check${N} — ağ ve sistem durumu kontrol aracı (https://github.com/guitareren/check)
 
 ${B}KULLANIM${N}
   check [${G}--lang en|tr${N}] ${G}<komut>${N}
@@ -774,6 +781,7 @@ ${B}KOMUTLAR${N}
 
   ${G}all${N} (veya boş)    wifi + cable + internet (hız testi hariç)
 
+  ${G}-i${N}, ${G}--info${N}, ${G}info${N}      Araç bilgilerini ve repo bağlantısını gösterir
   ${G}-h${N}, ${G}--help${N}        Bu yardımı gösterir
 
 ${B}DİL${N}
@@ -802,7 +810,7 @@ EOF
 
 usage_en() {
     cat <<EOF
-${B}${C}check${N} — network and system status tool
+${B}${C}check${N} — network and system status tool (https://github.com/guitareren/check)
 
 ${B}USAGE${N}
   check [${G}--lang en|tr${N}] ${G}<command>${N}
@@ -835,6 +843,7 @@ ${B}COMMANDS${N}
 
   ${G}all${N} (or empty)    wifi + cable + internet (no speed test)
 
+  ${G}-i${N}, ${G}--info${N}, ${G}info${N}      Show tool info and repository link
   ${G}-h${N}, ${G}--help${N}        Show this help
 
 ${B}LANGUAGE${N}
@@ -863,12 +872,14 @@ EOF
 
 case "$1" in
     -h|--help|help) usage_$LNG; exit 0 ;;
+    -i|--info|info) cmd_info; exit 0 ;;
     wifi)          cmd_wifi  || exit 1 ;;
     cable|kablo)   cmd_cable || exit 1 ;;
     internet|net)  cmd_internet "$2" ;;
     speed|hiz)     cmd_internet speed ;;
     sys|sistem|system) cmd_sys ;;
     all|"")
+        cmd_info
         if command -v nmcli &>/dev/null; then
             cmd_wifi quiet
         else

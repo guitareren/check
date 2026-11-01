@@ -16,6 +16,7 @@ Available in **English** and **Turkish** (see [Language](#language)).
 - **`check speed`**: everything in `internet`, plus a download/upload speed test via Cloudflare (about 20 seconds).
 - **`check sys`** (or **`check sistem`**): real-time system and hardware monitor (~0.2s). CPU model, usage percentage bar, and temperature; RAM and Swap usage (in GiB and percentage bar); multi-GPU support for NVIDIA, AMD, and Intel (GPU model and temperature; utilization % and VRAM for NVIDIA/AMD only; numbered `GPU 0`, `GPU 1`, etc. when multiple GPUs are present, or simply `GPU` for a single card; GPU lines are cleanly hidden on headless servers or VMs without a GPU).
 - **`check`** with no arguments: wifi + cable + internet (no speed test).
+- **`check -i`** (or **`check --info`**, **`check info`**): show tool info and repository link (araç bilgilerini ve repo bağlantısını gösterir).
 - **`check -h`**: detailed help.
 
 Values are colored **green** (good), **yellow** (fair), or **red** (bad).
@@ -28,6 +29,7 @@ check cable              # or: check kablo
 check internet           # or: check net
 check speed              # or: check internet speed
 check sys                # or: check sistem
+check -i                 # or: check --info, check info (araç bilgisi / tool info)
 check -h                 # or: check --help
 ```
 
